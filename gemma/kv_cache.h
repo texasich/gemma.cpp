@@ -17,6 +17,7 @@
 #define THIRD_PARTY_GEMMA_CPP_GEMMA_KV_CACHE_H_
 
 #include <stddef.h>
+#include <vector>
 
 #include "gemma/configs.h"  // ModelConfig
 #include "gemma/gemma_args.h"  // InferenceArgs
@@ -45,6 +46,15 @@ struct KVCache {
   // For use by other ctor and Copy()
   KVCache(const Extents2D& kv_extents, const Allocator& allocator);
 };
+
+// A non-owning view of a KVCache.
+struct KVCachePtr {
+  size_t SeqLen() const { return kv_cache.Rows(); }
+  MatPtrT<KV_t> kv_cache;
+};
+
+// Convenience function to create views into KVCaches.
+std::vector<KVCachePtr> ToKVCachePtrs(const hwy::Span<KVCache>& kv_caches);
 
 }  // namespace gcpp
 

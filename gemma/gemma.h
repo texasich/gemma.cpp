@@ -51,7 +51,7 @@ struct PerQuery {
   // attention in Paligemma.
   size_t prefix_end;
 
-  KVCache& kv_cache;
+  KVCachePtr kv_cache;
 
   // Previous token generated for this query, or the last prompt token. Will be
   // fed into the next Transformer() call.
@@ -64,7 +64,7 @@ struct AllQueries {
 
   // For `GenerateSingleT`: same prompt/pos, replicated for each KV cache.
   AllQueries(const PromptTokens& prompt, size_t pos, size_t prefix_end,
-             const hwy::Span<KVCache>& kv_caches) {
+             const hwy::Span<KVCachePtr>& kv_caches) {
     per_query_.reserve(kv_caches.size());
     for (size_t i = 0; i < kv_caches.size(); ++i) {
       HWY_ASSERT(kv_caches[i].SeqLen() == kv_caches[0].SeqLen());
@@ -78,11 +78,16 @@ struct AllQueries {
     }
   }
 
+  AllQueries(const PromptTokens& prompt, size_t pos, size_t prefix_end,
+             const hwy::Span<KVCache>& kv_caches)
+      : AllQueries(prompt, pos, prefix_end,
+                   hwy::Span<KVCachePtr>(ToKVCachePtrs(kv_caches))) {}
+
   // Batch of queries with initial position set to zero. Causal attention
   // is requested via empty or all-zero `prefix_end`.
   AllQueries(
       const hwy::Span<const PromptTokens>& prompts,
-      const hwy::Span<KVCache>& kv_caches,
+      const hwy::Span<KVCachePtr>& kv_caches,
       const hwy::Span<const size_t>& prefix_end = hwy::Span<const size_t>()) {
     HWY_ASSERT(prompts.size() == kv_caches.size());
     HWY_ASSERT(prompts.size() == prefix_end.size() || prefix_end.size() == 0);
@@ -98,6 +103,13 @@ struct AllQueries {
       });
     }
   }
+
+  AllQueries(
+      const hwy::Span<const PromptTokens>& prompts,
+      const hwy::Span<KVCache>& kv_caches,
+      const hwy::Span<const size_t>& prefix_end = hwy::Span<const size_t>())
+      : AllQueries(prompts, hwy::Span<KVCachePtr>(ToKVCachePtrs(kv_caches)),
+                   prefix_end) {}
 
   void Reserve(size_t size) { per_query_.reserve(size); }
   void Append(const PerQuery& query) { per_query_.push_back(query); }
@@ -156,7 +168,7 @@ class QBatch {
   size_t PrefixEnd(size_t qi) const {
     return queries_[QueryIdx(qi)].prefix_end;
   }
-  KVCache& KV(size_t qi) const { return queries_[QueryIdx(qi)].kv_cache; }
+  KVCachePtr& KV(size_t qi) const { return queries_[QueryIdx(qi)].kv_cache; }
   int& PrevToken(size_t qi) { return queries_[QueryIdx(qi)].prev_token; }
 
  private:

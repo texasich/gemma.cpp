@@ -16,6 +16,7 @@
 #include "gemma/kv_cache.h"
 
 #include <stddef.h>
+#include <vector>
 
 #include "gemma/configs.h"
 #include "gemma/gemma_args.h"
@@ -52,6 +53,15 @@ KVCache KVCache::Copy() {
   CopyMat(kv_cache, copy.kv_cache);
 
   return copy;
+}
+
+std::vector<KVCachePtr> ToKVCachePtrs(const hwy::Span<KVCache>& kv_caches) {
+  std::vector<KVCachePtr> ptrs;
+  ptrs.reserve(kv_caches.size());
+  for (size_t i = 0; i < kv_caches.size(); ++i) {
+    ptrs.push_back(KVCachePtr{.kv_cache = kv_caches[i].kv_cache});
+  }
+  return ptrs;
 }
 
 }  // namespace gcpp
