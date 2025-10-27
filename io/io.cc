@@ -110,7 +110,8 @@ class FilePosix : public File {
         HWY_WARN(
             "Read failure at pos %zu within size %zu with offset %zu and "
             "errno %d\n",
-            pos, size, offset, errno);
+            static_cast<size_t>(pos), static_cast<size_t>(size),
+            static_cast<size_t>(offset), errno);
         break;
       }
       pos += bytes_read;
@@ -130,7 +131,8 @@ class FilePosix : public File {
         HWY_WARN(
             "Write failure at pos %zu within size %zu with offset %zu and "
             "errno %d\n",
-            pos, size, offset, errno);
+            static_cast<size_t>(pos), static_cast<size_t>(size),
+            static_cast<size_t>(offset), errno);
         break;
       }
       pos += bytes_written;

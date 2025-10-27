@@ -14,7 +14,6 @@
 // limitations under the License.
 
 #include "compression/types.h"
-#include "util/zones.h"
 #ifndef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS GEMMA_DISABLED_TARGETS
 #endif  // HWY_DISABLED_TARGETS
@@ -38,7 +37,6 @@
 #include "util/mat.h"     // MatStorageT
 #include "util/test_util.h"
 #include "util/threading_context.h"
-#include "hwy/profiler.h"
 #include "hwy/tests/hwy_gtest.h"
 
 // clang-format off

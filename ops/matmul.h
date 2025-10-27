@@ -331,8 +331,8 @@ void DispatchOrder(MMOrder order, const Func& func, Args&&... args) {
   }
 }
 
-static inline bool IsBlock(MMOrder order) {
-  return order == MMOrder::kNT_MT_K || order == MMOrder::kNT_MT;
+static inline bool IsOneMC(MMOrder order) {
+  return order == MMOrder::kNT || order == MMOrder::kNT_K;
 }
 
 static inline bool IsOneKC(MMOrder order) {
@@ -381,6 +381,8 @@ static inline const char* StringFromParA(MMParA par_a) {
 // `mc` := A rows such that `kc` columns fit in L2,
 // `nc` := B rows such that `kc` columns fit in L3 alongside `mc x nc` C.
 // Also includes loop order and task granularity.
+//
+// This is shared by multiple M which return the same `BucketM`.
 #pragma pack(push, 1)
 class MMConfig {
  public:
@@ -388,8 +390,8 @@ class MMConfig {
   // `mr` is the number of A rows per call to `MMKernel::LoopKC`.
   // `MMOrder` is how to parallelize the outer loops.
   // `inner_tasks` chooses the within-cluster task granularity in `ForN`.
-  MMConfig(size_t K, size_t N, size_t mr, size_t mc, size_t kc, size_t nc,
-           size_t kc_multiple, size_t nc_multiple, MMOrder order,
+  MMConfig(size_t M, size_t K, size_t N, size_t mr, size_t mc, size_t kc,
+           size_t nc, size_t kc_multiple, size_t nc_multiple, MMOrder order,
            int inner_tasks)
       : mr_(static_cast<uint32_t>(mr)),
         mc_(static_cast<uint32_t>(mc)),
@@ -401,12 +403,8 @@ class MMConfig {
         inner_tasks_(static_cast<uint8_t>(inner_tasks)),
         reserved_{} {
     HWY_DASSERT(mr == 1 || mr == 2 || mr == 4);
-    if (mc % mr != 0) {
-      HWY_WARN("mc %zu not a multiple of mr %zu", mc, mr);
-    }
-    // Do not warn for single-kc tasks; some models unfortunately have K which
-    // are not multiples of `kc_multiple`.
-    if (kc != K && (kc % kc_multiple) != 0) {
+    // Some models have K which are not multiples of `kc_multiple`.
+    if (!IsOneKC(order) && (kc % kc_multiple) != 0) {
       HWY_WARN("kc %zu not a multiple of kc_multiple %zu", kc, kc_multiple);
     }
     if (nc != N && (nc % nc_multiple) != 0) {
@@ -417,11 +415,21 @@ class MMConfig {
   }
 
   // Splits M/N into blocks which are visited sequentially or in parallel.
-  // K is always sequential, see `MMOrder`.
   IndexRangePartition RangesOfMC(size_t M) const {
-    return MaxSizePartition(IndexRange(0, M), mc_, mr_);
+    if (IsOneMC(order_)) {
+      // Must have exactly one M range/tile, regardless of `mr_` and `mc_`.
+      return IndexRangePartition(M);
+    }
+    const size_t mc = HWY_MIN(M, MC());
+    const size_t mr = HWY_MIN(M, MR());
+    return MaxSizePartition(IndexRange(0, M), mc, mr);
   }
+  // K is either a single range, or a sequential loop.
   IndexRangePartition RangesOfKC(size_t K) const {
+    if (IsOneKC(order_)) {
+      // Must have exactly one K range/tile, regardless of `kc_`.
+      return IndexRangePartition(K);
+    }
     return MaxSizePartition(IndexRange(0, K), kc_, kc_multiple_);
   }
   IndexRangePartition RangesOfNC(size_t N) const {
@@ -448,7 +456,7 @@ class MMConfig {
   uint32_t kc_multiple_;
   MMOrder order_;
   uint8_t inner_tasks_;
-  HWY_MAYBE_UNUSED uint8_t reserved_[6];
+  HWY_MEMBER_VAR_MAYBE_UNUSED uint8_t reserved_[6];
 };
 static_assert(sizeof(MMConfig) == 32);  // for faster indexing
 #pragma pack(pop)
@@ -557,25 +565,26 @@ class MMAutoTune {
 
 //------------------------------------------------------------------------------
 
-// Minimum M, in units of tile rows of height mr={1, 2, 4}, from which
-// `MMOrder::kNT[_K]` are no longer allowed. They require a single MC range,
-// but choosing the same config for a larger M can result in multiple MC ranges.
-// Thus M less than this must have unique keys/configs.
-HWY_INLINE_VAR constexpr size_t kMaxTilesM = 8;
-
 // Map of previously seen dimensions to index via linear search.
 class MMKeys {
-  // Group batch size into buckets to reduce #auto-tunes.
-  static size_t BucketM(size_t M) {
-    if (M < kMaxTilesM * kMaxMR) return M;  // See kMaxTilesM above.
-    if (M <= 128) return 128;
-    return 512;
-  }
-
  public:
   using Key = uint64_t;
   // KeyFromDims will only return this if all dims are zero, which is invalid.
   static constexpr Key kPadding = 0;
+
+  // Returns the maximum permissible M in the bucket, for grouping batch sizes
+  // into buckets to reduce #auto-tunes.
+  static size_t BucketM(size_t M) {
+    HWY_DASSERT(M != 0);
+    // Small M: 1..3, 4..7, 8..15, etc. share the same config.
+    if (M < 64) return M | (kMaxMR - 1);
+    // Larger M use power of two buckets: 64..127, 128..255, etc.
+    const size_t floor_log2_M =
+        31 - hwy::Num0BitsAboveMS1Bit_Nonzero32(static_cast<uint32_t>(M));
+    const size_t min_M = size_t{1} << floor_log2_M;
+    HWY_DASSERT(min_M <= M && M < 2 * min_M);
+    return 2 * min_M - 1;
+  }
 
   // Compresses the dimensions into a single Key for faster comparison.
   static Key KeyFromDims(size_t M, size_t K, size_t N, size_t num_B) {
