@@ -404,7 +404,7 @@ class MMConfig {
         reserved_{} {
     HWY_DASSERT(mr == 1 || mr == 2 || mr == 4);
     // Some models have K which are not multiples of `kc_multiple`.
-    if (!IsOneKC(order) && (kc % kc_multiple) != 0) {
+    if (kc != K && (kc % kc_multiple) != 0) {
       HWY_WARN("kc %zu not a multiple of kc_multiple %zu", kc, kc_multiple);
     }
     if (nc != N && (nc % nc_multiple) != 0) {
