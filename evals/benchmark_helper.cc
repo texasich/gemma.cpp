@@ -38,7 +38,10 @@ namespace gcpp {
 
 GemmaEnv::GemmaEnv(const LoaderArgs& loader, const ThreadingArgs& threading,
                    const InferenceArgs& inference)
-    : ctx_(threading), env_(ctx_), gemma_(loader, inference, ctx_) {
+    : initializer_value_(gcpp::InternalInit()),
+      ctx_(threading),
+      env_(ctx_),
+      gemma_(loader, inference, ctx_) {
   const ModelConfig& config = gemma_.Config();
   // Only allocate one for starters because GenerateBatch might not be called.
   kv_caches_.push_back(KVCache(config, inference, ctx_.allocator));

@@ -181,7 +181,6 @@ TEST_F(GemmaTest, CrossEntropySmall) {
 
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
-  gcpp::InternalInit();
   gcpp::GemmaTest::InitEnv(argc, argv);
   int ret = RUN_ALL_TESTS();
   gcpp::GemmaTest::DeleteEnv();

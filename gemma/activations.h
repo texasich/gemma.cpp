@@ -54,6 +54,11 @@ struct AttentionActivations {
                          ? layer_config.heads * 3 * layer_config.qkv_dim
                          : layer_config.heads * layer_config.qkv_dim,
                      allocator)),
+        q_bf(MatFactory("q_bf", batch_size,
+                        config.vocab_size == 0
+                            ? layer_config.heads * 3 * layer_config.qkv_dim
+                            : layer_config.heads * layer_config.qkv_dim,
+                        allocator)),
         q_T(MatFactory("q_T", layer_config.qkv_dim,
                        config.vocab_size == 0
                            ? batch_size * layer_config.heads * 3
@@ -88,12 +93,14 @@ struct AttentionActivations {
     // If we forget any MatMul outputs here, debug builds print a warning but
     // fill them in each MatMul call.
     q.AllocateAndAttachRowPtrs(row_ptrs);
+    q_bf.AllocateAndAttachRowPtrs(row_ptrs);
     q_T.AllocateAndAttachRowPtrs(row_ptrs);
     att_sums.AllocateAndAttachRowPtrs(row_ptrs);
   }
 
   void SetBatchSize(size_t batch_size) {
     q.OverrideRows(batch_size);
+    q_bf.OverrideRows(batch_size);
     // q_T rows are always qkv_dim!
 
     pre_att_rms_out.OverrideRows(batch_size);
@@ -105,6 +112,7 @@ struct AttentionActivations {
   }
 
   MatStorageT<float> q;   // query
+  MatStorageT<BF16> q_bf;
   MatStorageT<BF16> q_T;  // Transposed to maximize attention speed.
 
   MatStorageT<float> pre_att_rms_out;
@@ -130,6 +138,7 @@ struct AttentionActivationsPtrs {
                            const AttentionActivations& activations)
       : AttentionActivationsPtrs(config, seq_len) {
     q = activations.q;
+    q_bf = activations.q_bf;
     q_T = activations.q_T;
     pre_att_rms_out = activations.pre_att_rms_out;
     att = activations.att;
@@ -141,6 +150,7 @@ struct AttentionActivationsPtrs {
 
   void SetBatchSize(size_t batch_size) {
     q.OverrideRows(batch_size);
+    q_bf.OverrideRows(batch_size);
     // q_T rows are always qkv_dim!
     pre_att_rms_out.OverrideRows(batch_size);
     att.OverrideRows(batch_size);
@@ -151,6 +161,7 @@ struct AttentionActivationsPtrs {
 
   const ModelConfig& config;
   MatPtrT<float> q;
+  MatPtrT<BF16> q_bf;
   MatPtrT<BF16> q_T;
   MatPtrT<float> pre_att_rms_out;
   MatPtrT<float> att;

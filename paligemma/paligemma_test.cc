@@ -72,7 +72,6 @@ TEST_F(PaliGemmaTest, QueryObjects) {
 
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
-  gcpp::InternalInit();
 
   gcpp::GemmaEnv env(argc, argv);
   gcpp::s_env = &env;

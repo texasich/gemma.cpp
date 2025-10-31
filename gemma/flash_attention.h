@@ -45,7 +45,7 @@ namespace gcpp {
                             ThreadingContext& ctx, size_t worker);            \
                                                                               \
   Tile4FlashState TileFlashAttention4(                                        \
-      const MatPtrT<float>& q, const uint32_t* HWY_RESTRICT q_offsets,        \
+      const MatPtrT<BF16>& q, const uint32_t* HWY_RESTRICT q_offsets,         \
       const MatPtrT<KV_t>& k, size_t start_pos,                               \
       const uint32_t* HWY_RESTRICT last_pos, size_t min_last_pos,             \
       size_t max_last_pos, const MatPtrT<KV_t>& v, size_t layer_idx,          \
