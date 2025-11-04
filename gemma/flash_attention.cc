@@ -716,7 +716,7 @@ void FlashAttention(const size_t num_tokens, const size_t target_parallelism,
       size_t last = pos;
       const size_t prefix_end = qbatch.PrefixEnd(qi);
       if (prefix_end > 0 && prefix_end - 1 > last) {
-        // last_pos in QDotK and WeightedSumV is inclusive.
+        // last_pos in `TileFlashAttention` is inclusive.
         last = prefix_end - 1;
       }
       last_pos[offset] = last;

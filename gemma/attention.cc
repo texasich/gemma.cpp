@@ -66,20 +66,12 @@ static HWY_INLINE void QDotK(const size_t start_pos, const size_t last_pos,
   CompressTraits<BF16>::Compress(df, q, qkv_dim, tls, MakeSpan(q_bf, qkv_dim),
                                  0);
 
-  if (HWY_LIKELY(last_pos < static_cast<size_t>(div_seq_len.GetDivisor()))) {
-    // Slightly faster: no wraparound.
-    for (size_t pos = start_pos; pos <= last_pos; ++pos) {
-      const float score =
-          Dot(dbf, MakeConstSpan(q_bf, qkv_dim), 0, k.Row(pos), qkv_dim);
-      att[pos] = score;
-    }
-  } else {
-    for (size_t pos = start_pos; pos <= last_pos; ++pos) {
-      const size_t pos_modulo = div_seq_len.Remainder(pos);
-      const float score =
-          Dot(dbf, MakeConstSpan(q_bf, qkv_dim), 0, k.Row(pos_modulo), qkv_dim);
-      att[pos_modulo] = score;
-    }
+  // --seq_len must be large enough to avoid wraparound.
+  HWY_DASSERT(last_pos < static_cast<size_t>(div_seq_len.GetDivisor()));
+  for (size_t pos = start_pos; pos <= last_pos; ++pos) {
+    const float score =
+        Dot(dbf, MakeConstSpan(q_bf, qkv_dim), 0, k.Row(pos), qkv_dim);
+    att[pos] = score;
   }
 }
 
@@ -114,25 +106,13 @@ static HWY_INLINE void WeightedSumV(
     const hwy::Divisor& div_seq_len, const float* HWY_RESTRICT att,
     const MatPtrT<KV_t>& v, float* HWY_RESTRICT att_out, ThreadingContext& ctx,
     const size_t worker) {
-  if (HWY_LIKELY(last_pos < static_cast<size_t>(div_seq_len.GetDivisor()))) {
-    // Slightly faster: no wraparound. Could be replaced with MatMul(att, v) if
-    // we supported non-transposed B.
-    // TODO: 2..4x unroll
-    MulByConstTo(att[start_pos], v.Row(start_pos), att_out, v.Cols(), ctx,
-                 worker);
-    for (size_t pos = start_pos + 1; pos <= last_pos; ++pos) {
-      MulByConstAndAdd(att[pos], v.Row(pos), att_out, v.Cols());
-    }
-  } else {
-    {
-      const size_t pos_mod = div_seq_len.Remainder(start_pos);
-      MulByConstTo(att[pos_mod], v.Row(pos_mod), att_out, v.Cols(), ctx,
-                   worker);
-    }
-    for (size_t pos = start_pos + 1; pos <= last_pos; ++pos) {
-      const size_t pos_mod = div_seq_len.Remainder(pos);
-      MulByConstAndAdd(att[pos_mod], v.Row(pos_mod), att_out, v.Cols());
-    }
+  // --seq_len must be large enough to avoid wraparound.
+  HWY_DASSERT(last_pos < static_cast<size_t>(div_seq_len.GetDivisor()));
+  // TODO: replace with MatMul(att, v) after it supports non-transposed B.
+  MulByConstTo(att[start_pos], v.Row(start_pos), att_out, v.Cols(), ctx,
+               worker);
+  for (size_t pos = start_pos + 1; pos <= last_pos; ++pos) {
+    MulByConstAndAdd(att[pos], v.Row(pos), att_out, v.Cols());
   }
 }
 
@@ -146,9 +126,10 @@ void SingleDotSoftmaxWeightedSum(
     float* HWY_RESTRICT att_out, ThreadingContext& ctx, const size_t worker) {
   const float att_cap = activations.config.att_cap;
   const float query_scale = activations.query_scale;
-  const size_t seq_len =
-      static_cast<size_t>(activations.div_seq_len.GetDivisor());
+  // --seq_len must be large enough to avoid wraparound.
+  HWY_DASSERT(last_pos < activations.SeqLen());
   const LayerConfig& layer_config = activations.config.layer_configs[layer_idx];
+
   // Apply rope and scaling to Q.
   if (query_norm_scale.HasPtr()) {
     CallUpcasted(&query_norm_scale, [&](const auto* weights_t) {
@@ -163,8 +144,7 @@ void SingleDotSoftmaxWeightedSum(
   QDotK(start_pos, last_pos, activations.div_seq_len, q, k, att, ctx, worker);
 
   // SoftMax with optional SoftCap yields "probabilities" in att.
-  const size_t att_len = HWY_MIN(last_pos + 1, seq_len);
-  const Logits logits(att, att_len);
+  const Logits logits(att, last_pos + 1);
   MaybeLogitsSoftCap(att_cap, logits, ctx, worker);
   Softmax(logits, ctx, worker, /*temperature=*/1.0f);
 
@@ -194,8 +174,7 @@ void DotSoftmaxWeightedSum(const size_t num_tokens, const size_t layer_idx,
   const size_t kHeadGroups = layer_config.heads / layer_config.kv_heads;
 
   const size_t cache_layer_size = layer_config.CacheLayerSize();
-  const size_t seq_len =
-      static_cast<size_t>(activations.div_seq_len.GetDivisor());
+  const size_t seq_len = activations.SeqLen();
   // All layers should have the same number of heads.
   HWY_DASSERT(activations.div_heads.GetDivisor() == layer_config.heads);
 
@@ -284,8 +263,10 @@ static HWY_INLINE void ComputeQKV(size_t num_tokens, const size_t layer_idx,
        ++interleaved_idx) {
     const size_t qi = div_qbatch.Remainder(interleaved_idx);
     const size_t batch_idx = div_qbatch.Divide(interleaved_idx);
-    const size_t cache_pos =
-        activations.div_seq_len.Remainder(qbatch.Pos(qi) + batch_idx);
+    const size_t cache_pos = qbatch.Pos(qi) + batch_idx;
+    // --seq_len must be large enough to avoid wraparound.
+    HWY_DASSERT(cache_pos < activations.SeqLen());
+
     env.row_ptrs[0][interleaved_idx] = reinterpret_cast<uint8_t*>(
         qbatch.KV(qi).kv_cache.Row(cache_pos) + layer_idx * cache_layer_size);
   }
@@ -304,8 +285,9 @@ static HWY_INLINE void ComputeQKV(size_t num_tokens, const size_t layer_idx,
         const size_t interleaved_idx = task / kv_heads;
         const size_t qi = div_qbatch.Remainder(interleaved_idx);
         const size_t batch_idx = div_qbatch.Divide(interleaved_idx);
-        const size_t pos = qbatch.Pos(qi) + batch_idx;
-        const size_t cache_pos = activations.div_seq_len.Remainder(pos);
+        const size_t cache_pos = qbatch.Pos(qi) + batch_idx;
+        // --seq_len must be large enough to avoid wraparound.
+        HWY_DASSERT(cache_pos < activations.SeqLen());
         auto& kv_cache = qbatch.KV(qi).kv_cache;
         KV_t* HWY_RESTRICT kv = kv_cache.Row(cache_pos) +
                                 layer_idx * cache_layer_size +
@@ -325,7 +307,7 @@ static HWY_INLINE void ComputeQKV(size_t num_tokens, const size_t layer_idx,
         }
 
         PositionalEncodingQK(kv_f32, layer_idx, activations, env.ctx, worker,
-                             pos, /*mul=*/1.0f);
+                             cache_pos, /*mul=*/1.0f);
         CompressPerThread tls;
         Compress(kv_f32, 2 * qkv_dim, tls, MakeSpan(kv, 2 * qkv_dim), 0);
       });

@@ -202,8 +202,7 @@ TEST(ThreadingTest, TestStaticPartition) {
   }
 }
 
-static constexpr size_t kU64PerThread = HWY_ALIGNMENT / sizeof(size_t);
-static uint64_t outputs[hwy::kMaxLogicalProcessors * kU64PerThread];
+static uint64_t outputs[hwy::kMaxLogicalProcessors * kU64PerLine];
 
 std::vector<uint64_t> MeasureForkJoin(hwy::ThreadPool& pool) {
   // Governs duration of test; avoid timeout in debug builds.
@@ -217,7 +216,7 @@ std::vector<uint64_t> MeasureForkJoin(hwy::ThreadPool& pool) {
   const double t0 = hwy::platform::Now();
   for (size_t reps = 0; reps < 1200; ++reps) {
     pool.Run(0, pool.NumWorkers(), kCaller, [&](uint64_t task, size_t thread) {
-      outputs[thread * kU64PerThread] = base + thread;
+      outputs[thread * kU64PerLine] = base + thread;
     });
     hwy::PreventElision(outputs[base]);
     if (pool.AutoTuneComplete()) break;
@@ -258,7 +257,7 @@ std::vector<uint64_t> MeasureForkJoin(hwy::ThreadPool& pool) {
       const uint64_t t0 = hwy::timer::Start();
       pool.Run(0, pool.NumWorkers(), kCaller,
                [&](uint64_t task, size_t thread) {
-                 outputs[thread * kU64PerThread] = base + thread;
+                 outputs[thread * kU64PerLine] = base + thread;
                });
       const uint64_t t1 = hwy::timer::Stop();
       times.push_back(t1 - t0);
@@ -268,7 +267,7 @@ std::vector<uint64_t> MeasureForkJoin(hwy::ThreadPool& pool) {
       const uint64_t t0 = hwy::timer::Start();
       pool.Run(0, pool.NumWorkers(), kCaller,
                [&](uint64_t task, size_t thread) {
-                 outputs[thread * kU64PerThread] = base + thread;
+                 outputs[thread * kU64PerLine] = base + thread;
                });
       const uint64_t t1 = hwy::timer::Start();
       times.push_back(t1 - t0);
@@ -315,10 +314,10 @@ TEST(ThreadingTest, BenchJoin) {
 
     // Verify outputs to ensure the measured code is not a no-op.
     for (size_t lp = 0; lp < pool.NumWorkers(); ++lp) {
-      HWY_ASSERT(outputs[lp * kU64PerThread] >= 1);
-      HWY_ASSERT(outputs[lp * kU64PerThread] <= 1 + pool.NumWorkers());
-      for (size_t i = 1; i < kU64PerThread; ++i) {
-        HWY_ASSERT(outputs[lp * kU64PerThread + i] == 0);
+      HWY_ASSERT(outputs[lp * kU64PerLine] >= 1);
+      HWY_ASSERT(outputs[lp * kU64PerLine] <= 1 + pool.NumWorkers());
+      for (size_t i = 1; i < kU64PerLine; ++i) {
+        HWY_ASSERT(outputs[lp * kU64PerLine + i] == 0);
       }
     }
   };

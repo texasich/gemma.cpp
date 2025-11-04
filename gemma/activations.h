@@ -159,6 +159,10 @@ struct AttentionActivationsPtrs {
     // `inv_timescale*` are not batched.
   }
 
+  size_t SeqLen() const {
+    return static_cast<size_t>(div_seq_len.GetDivisor());
+  }
+
   const ModelConfig& config;
   MatPtrT<float> q;
   MatPtrT<BF16> q_bf;
