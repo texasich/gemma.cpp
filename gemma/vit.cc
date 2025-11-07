@@ -295,19 +295,20 @@ static HWY_NOINLINE void EmbedImagePatches(const Image& image,
   const size_t model_dim = model_config.vit_config.model_dim;
   const size_t patch_width = model_config.vit_config.patch_width;
   const size_t num_tokens = model_config.vit_config.seq_len;
-  const size_t patch_size = patch_width * patch_width * 3;
+  const size_t patch_area = patch_width * patch_width * 3;
+  const hwy::Divisor div_patch_dim(patch_width);
   HWY_DASSERT(weights.vit_img_embedding_kernel.Rows() == model_dim);
-  HWY_DASSERT(weights.vit_img_embedding_kernel.Cols() == patch_size);
+  HWY_DASSERT(weights.vit_img_embedding_kernel.Cols() == patch_area);
   HWY_DASSERT(activations.x.Cols() == model_dim);
   (void)model_dim;
   // img/embedding/kernel has original shape (14, 14, 3, 1152)
   // H x W x C x D transposed to D x (H x W x C) so here (1152, 14 * 14 * 3)
   // image_patches is (256, 14 * 14 * 3)
   // Must be padded, see `DoDecompressA`.
-  MatStorageT<float> image_patches("patches", Extents2D(num_tokens, patch_size),
+  MatStorageT<float> image_patches("patches", Extents2D(num_tokens, patch_area),
                                    env.ctx.allocator, MatPadding::kOdd);
   for (size_t i = 0; i < num_tokens; ++i) {
-    image.GetPatch(i, image_patches.Row(i));
+    image.GetPatch(i, div_patch_dim, image_patches.Row(i));
   }
   CallMatMul(image_patches, weights.vit_img_embedding_kernel,
              weights.vit_img_embedding_bias.PackedScale1(), env, activations.x);
