@@ -513,6 +513,7 @@ ModelConfig GetVitConfig(const ModelConfig& config);
 enum DeducedLayerTypes {
   kDeducedViT = 2,
   kDeduced448 = 4,   // For ViT, 448x448 resolution instead of 224x224.
+  kDeducedKqNorm = 8,
 };
 
 // layer_types is one or more of `DeducedLayerTypes`.

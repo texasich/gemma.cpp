@@ -678,7 +678,9 @@ Model DeduceModel(const Path& blob_path, size_t layers, int layer_types) {
       return Model::GEMMA3_270M;
 
     case 26:
-      if (layer_types & kDeducedViT) return Model::GEMMA3_1B;
+      if (layer_types & (kDeducedViT|kDeducedKqNorm)) {
+        return Model::GEMMA3_1B;
+      }
       return Model::GEMMA2_2B;
     case 27:
       return (layer_types & kDeduced448) ? Model::PALIGEMMA2_3B_448
