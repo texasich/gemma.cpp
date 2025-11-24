@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 
+#include <optional>
 #include <vector>
 
 // IWYU pragma: begin_exports
@@ -89,17 +90,17 @@ struct AllQueries {
       const hwy::Span<const PromptTokens>& prompts,
       const hwy::Span<KVCachePtr>& kv_caches,
       const hwy::Span<const size_t>& prefix_end = hwy::Span<const size_t>()) {
-    HWY_ASSERT(prompts.size() == kv_caches.size());
     HWY_ASSERT(prompts.size() == prefix_end.size() || prefix_end.size() == 0);
-    per_query_.reserve(kv_caches.size());
-    for (size_t i = 0; i < kv_caches.size(); ++i) {
-      HWY_ASSERT(kv_caches[i].SeqLen() == kv_caches[0].SeqLen());
+    per_query_.reserve(prompts.size());
+    for (size_t i = 0; i < prompts.size(); ++i) {
+      HWY_ASSERT(kv_caches.size() == 0 ||
+                 kv_caches[i].SeqLen() == kv_caches[0].SeqLen());
       per_query_.push_back(PerQuery{
           .prompt = prompts[i],
           .mutable_pos = 0,
           .initial_pos = 0,
           .prefix_end = prefix_end.size() == 0 ? 0 : prefix_end[i],
-          .kv_cache = kv_caches[i],
+          .kv_cache = kv_caches.size() == 0 ? KVCachePtr() : kv_caches[i],
       });
     }
   }
@@ -142,10 +143,13 @@ class QBatch {
     HWY_ASSERT(max_size_ <= kMaxBatchSize);
     HWY_DASSERT(size_ != 0);
     HWY_DASSERT(start_ + size_ <= queries_.NumQueries());
+    for (int i = 0; i < size_; ++i) {
+      query_idx_.push_back(start_ + i);
+    }
   }
 
   // Returns a single-query view starting at `qi` relative to this batch.
-  QBatch Single(size_t qi) const { return QBatch(start_ + qi, 1, queries_); }
+  QBatch Single(size_t qi) const { return QBatch(QueryIdx(qi), 1, queries_); }
 
   // How many queries in this batch, <= `queries_.NumQueries()` and `max_size_`.
   size_t Size() const { return size_; }
@@ -153,7 +157,7 @@ class QBatch {
   // Returns index for use with `AllQueries` and `BatchStreamToken`.
   size_t QueryIdx(size_t qi) const {
     HWY_DASSERT(qi < size_);
-    return start_ + qi;
+    return query_idx_[qi];
   }
 
   // Accessor functions to bridge the previous SoA and current AoS layout.
@@ -171,11 +175,46 @@ class QBatch {
   KVCachePtr& KV(size_t qi) const { return queries_[QueryIdx(qi)].kv_cache; }
   int& PrevToken(size_t qi) { return queries_[QueryIdx(qi)].prev_token; }
 
- private:
+  // let query_idx_[to] point to the from in the queries_; this is only used if
+  // the slot in the QBatch is less than the number of queries.
+  void Insert(size_t from, size_t to) {
+    if (from == to) return;
+    HWY_ASSERT(!queries_[from].kv_cache.IsEmpty());
+    HWY_ASSERT(queries_[to].kv_cache.IsEmpty());
+    // Conceptually, insert from.query to location to.
+    query_idx_[to] = from;
+  }
+
+ protected:
   size_t start_;
   size_t max_size_;
   AllQueries& queries_;
+  std::vector<size_t> query_idx_;
   size_t size_;
+};
+
+// Used for continuous batching.
+class ContinuousQBatch : public QBatch {
+ public:
+  ContinuousQBatch(size_t max_size, AllQueries& queries);
+
+  // Whether we should prefill the next batch, i.e. next_to_insert_ ==
+  // next_to_prefill_.
+  bool ShouldPrefill() const;
+
+  // Setup the query_idx_ to point to the next group of queries to prefill.
+  void SetupNextBatchForPrefill();
+
+  // Get the next query to insert to the generate batch.
+  std::optional<size_t> GetNextToInsert();
+
+  // Collect the kv_cache from QBatch to available_kv_caches_.
+  void MaybeReleaseKV(const QBatch& from);
+
+ public:
+  int next_to_prefill_ = 0;
+  int next_to_insert_ = 0;
+  std::vector<KVCachePtr> available_kv_caches_;
 };
 
 struct TimingInfo {

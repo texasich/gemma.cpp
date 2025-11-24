@@ -163,6 +163,9 @@ struct RuntimeConfig {
   // default decision is likely sufficient because it is based on whether
   // threads are successfully pinned.
   mutable Tristate use_spinning = Tristate::kDefault;
+
+  // Whether to use continuous batching.
+  bool use_continuous_batching = false;
 };
 
 struct InferenceArgs : public ArgsBase<InferenceArgs> {

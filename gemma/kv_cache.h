@@ -28,6 +28,13 @@ namespace gcpp {
 
 using KV_t = float;
 
+// A non-owning view of a KVCache.
+struct KVCachePtr {
+  bool IsEmpty() const { return kv_cache.Rows() == 0; }
+  size_t SeqLen() const { return kv_cache.Rows(); }
+  MatPtrT<KV_t> kv_cache;
+};
+
 struct KVCache {
   KVCache(const ModelConfig& config, const InferenceArgs& inference_args,
           const Allocator& allocator);
@@ -40,17 +47,13 @@ struct KVCache {
 
   MatStorageT<KV_t> kv_cache;  // [seq_len, layers * kv_heads * qkv_dim * 2]
 
+  KVCachePtr ToPtr() { return KVCachePtr{.kv_cache = kv_cache}; }
+
  private:
   const Allocator& allocator_;
 
   // For use by other ctor and Copy()
   KVCache(const Extents2D& kv_extents, const Allocator& allocator);
-};
-
-// A non-owning view of a KVCache.
-struct KVCachePtr {
-  size_t SeqLen() const { return kv_cache.Rows(); }
-  MatPtrT<KV_t> kv_cache;
 };
 
 // Convenience function to create views into KVCaches.

@@ -18,6 +18,8 @@
 
 #include "gemma/gemma.h"
 
+#include <optional>
+
 #include "compression/types.h"  // GEMMA_DISABLED_TARGETS
 #include "util/zones.h"
 #ifndef HWY_DISABLED_TARGETS
@@ -35,7 +37,7 @@
 // After highway.h
 #include "gemma/attention.h"  // includes highway.h
 #include "gemma/gemma-inl.h"
-#include "gemma/vit.h"      // includes highway.h
+#include "gemma/vit.h"  // includes highway.h
 
 #ifndef GEMMA_CC_ONCE
 #define GEMMA_CC_ONCE
@@ -357,6 +359,10 @@ static HWY_NOINLINE void PrefillQBatch(const size_t max_prompt_size,
         (void)runtime_config.StreamToken(qbatch.QueryIdx(qi), pos_in_prompt,
                                          token, 0.0f);
         qbatch.MutablePos(qi) = pos_in_prompt;
+      } else {
+        // This prevents the kv cache of eos_id to be written to last prefilled
+        // token.
+        qbatch.MutablePos(qi) = qbatch.Prompt(qi).size();
       }
 
       qbatch.PrevToken(qi) = token;
@@ -589,6 +595,57 @@ static void GenerateT(const ModelConfig& config,
   timing_info.NotifyGenerateDone();
 }
 
+// Same as GenerateT, but uses ContinuousQBatch.
+static void GenerateTWithContinuousBatching(
+    const ModelConfig& config, const RuntimeConfig& runtime_config,
+    const AesCtrEngine& engine, const WeightsPtrs& weights,
+    Activations& activations, AllQueries& all_queries, MatMulEnv& env,
+    TimingInfo& timing_info) {
+  const size_t qbatch_size = runtime_config.decode_qbatch_size;
+
+  QBatch qbatch(0, qbatch_size, all_queries);
+  ContinuousQBatch prefill_batch(qbatch_size, all_queries);
+
+  hwy::BitSet4096<> non_eos;
+  const SampleFunc sample_token =
+      ChooseSampleFunc(runtime_config, engine, env.ctx);
+
+  int query_inserted = 0;
+  while (non_eos.Any() || query_inserted < all_queries.NumQueries()) {
+    for (size_t qi = 0; qi < qbatch.Size(); ++qi) {
+      // Continue if qi slot is still processing.
+      if (non_eos.Get(qi)) continue;
+      // Collect the kv_cache from the qi slot in the qbatch to the
+      // available_kv_caches_ in the prefill_batch.
+      prefill_batch.MaybeReleaseKV(qbatch.Single(qi));
+
+      // Prefill if no available prefilled queries to insert.
+      if (prefill_batch.ShouldPrefill()) {
+        prefill_batch.SetupNextBatchForPrefill();
+        PrefillTBatchOrQBatch(config, runtime_config, weights, activations,
+                              prefill_batch, env, timing_info);
+        activations.SetBatchSize(qbatch.Size());
+      }
+
+      // Get the next query to insert to the generate batch.
+      std::optional<size_t> qi_to_insert = prefill_batch.GetNextToInsert();
+      if (qi_to_insert) {
+        qbatch.Insert(qi_to_insert.value(), qi);
+        query_inserted++;
+
+        non_eos.Set(qi);
+        StreamAndUpdateEOSAfterPrefill(config, runtime_config, qbatch, non_eos,
+                                       qi);
+      }
+    }
+
+    Transformer(config, runtime_config, weights, activations, qbatch, env);
+    SampleAndStream(config, runtime_config, weights, sample_token, activations,
+                    qbatch, env, non_eos, timing_info);
+  }
+  timing_info.NotifyGenerateDone();
+}
+
 void GenerateSingleT(const PromptTokens& prompt, size_t pos, size_t prefix_end,
                      const ModelConfig& config,
                      const RuntimeConfig& runtime_config,
@@ -619,12 +676,17 @@ void GenerateBatchT(const ModelConfig& config,
                           all_queries[0].kv_cache.SeqLen(), env.ctx,
                           env.row_ptrs);
 
-  for (size_t start = 0; start < all_queries.NumQueries();
-       start += runtime_config.decode_qbatch_size) {
-    QBatch qbatch(start, runtime_config.decode_qbatch_size, all_queries);
-    // Generate a batch of one token for each of `qbatch.Size()` queries.
-    GenerateT(config, runtime_config, engine, weights, activations, qbatch, env,
-              timing_info);
+  if (runtime_config.use_continuous_batching) {
+    GenerateTWithContinuousBatching(config, runtime_config, engine, weights,
+                                    activations, all_queries, env, timing_info);
+  } else {
+    for (size_t start = 0; start < all_queries.NumQueries();
+         start += runtime_config.decode_qbatch_size) {
+      QBatch qbatch(start, runtime_config.decode_qbatch_size, all_queries);
+      // Generate a batch of one token for each of `qbatch.Size()` queries.
+      GenerateT(config, runtime_config, engine, weights, activations, qbatch,
+                env, timing_info);
+    }
   }
 }
 
@@ -719,6 +781,65 @@ void Gemma::GenerateImageTokens(const RuntimeConfig& runtime_config,
                                              image_tokens, env);
 
   env.ctx.pools.MaybeStopSpinning(runtime_config.use_spinning);
+}
+
+ContinuousQBatch::ContinuousQBatch(size_t max_size, AllQueries& queries)
+    : QBatch(0, max_size, queries) {
+  for (size_t i = start_; i < queries_.NumQueries(); ++i) {
+    if (!queries_[i].kv_cache.IsEmpty()) {
+      // Put the kv_cache to the available_kv_caches_ instead; leaving the
+      // kv_cache in the queries_ is very confusing. This simplifies the logic
+      // of kv_cache management.
+      available_kv_caches_.push_back(queries_[i].kv_cache);
+      queries_[i].kv_cache = KVCachePtr();
+    }
+  }
+}
+
+bool ContinuousQBatch::ShouldPrefill() const {
+  const bool no_available_to_insert = next_to_insert_ == next_to_prefill_;
+  const int more_queries_to_prefill = next_to_prefill_ < queries_.NumQueries();
+  return no_available_to_insert && more_queries_to_prefill;
+}
+
+void ContinuousQBatch::SetupNextBatchForPrefill() {
+  start_ = next_to_prefill_;
+  size_ = HWY_MIN(max_size_, queries_.NumQueries() - start_);
+  HWY_DASSERT(size_ != 0);
+  HWY_DASSERT(start_ + size_ <= queries_.NumQueries());
+  query_idx_.clear();
+  query_idx_.reserve(size_);
+  for (size_t i = 0; i < size_; ++i) {
+    const size_t next_query_idx = start_ + i;
+    query_idx_.push_back(next_query_idx);
+    HWY_ASSERT(queries_[next_query_idx].kv_cache.IsEmpty());
+    queries_[next_query_idx].kv_cache = available_kv_caches_.back();
+    available_kv_caches_.pop_back();
+  }
+  next_to_prefill_ += size_;
+}
+
+std::optional<size_t> ContinuousQBatch::GetNextToInsert() {
+  if (next_to_insert_ == next_to_prefill_) {
+    return std::nullopt;
+  }
+  next_to_insert_++;
+  return next_to_insert_ - 1;
+}
+
+void ContinuousQBatch::MaybeReleaseKV(const QBatch& from) {
+  const int query_to_collect = from.QueryIdx(0);
+  // Only collect if the query to collect is not the same as the next query to
+  // insert. This happens at the beginning of each Generate call.
+  if (query_to_collect != next_to_insert_) {
+    // Only clear the KV cache if there are more queries to insert; Otherwise
+    // we get a crash because Transformer will still access that KV cache.
+    if (next_to_insert_ < queries_.NumQueries()) {
+      available_kv_caches_.push_back(from.KV(0));
+      ZeroInit(from.KV(0).kv_cache);
+      from.KV(0) = KVCachePtr();
+    }
+  }
 }
 
 }  // namespace gcpp
