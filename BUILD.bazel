@@ -569,6 +569,7 @@ cc_library(
         "gemma/gemma-inl.h",
     ],
     deps = [
+        ":allocator",
         ":basics",
         ":configs",
         ":gemma_args",
@@ -576,9 +577,9 @@ cc_library(
         ":mat",
         ":matmul",
         ":matmul_env",
-        ":test_util",
         ":model_store",
         ":ops",
+        ":test_util",
         ":threading",
         ":threading_context",
         ":weights",
@@ -594,6 +595,8 @@ cc_library(
         "@highway//:profiler",
         "@highway//:thread_pool",
         "@highway//hwy/contrib/sort:vqsort",
+    ] +
+    [
     ],
 )
 
