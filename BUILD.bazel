@@ -528,6 +528,7 @@ cc_test(
         ":kv_cache",
         ":threading_context",
         "//testing/base/public:gunit_main",
+        "@highway//:hwy",
     ],
 )
 

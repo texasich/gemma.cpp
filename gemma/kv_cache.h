@@ -53,7 +53,11 @@ struct KVCache {
 
   MatStorageT<KV_t> kv_cache;  // [seq_len, layers * kv_heads * qkv_dim * 2]
 
-  KVCachePtr ToPtr() { return KVCachePtr{.kv_cache = kv_cache}; }
+  KVCachePtr ToPtr() {
+    return KVCachePtr{
+        .kv_cache = kv_cache,
+    };
+  }
 
  private:
   const Allocator& allocator_;
