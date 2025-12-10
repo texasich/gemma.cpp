@@ -33,9 +33,7 @@ using KV_t = float;
 // A non-owning view of a KVCache.
 struct KVCachePtr {
   bool IsEmpty() const { return kv_cache.Rows() == 0; }
-  size_t SeqLen() const {
-    return kv_cache.Rows();
-  }
+  size_t SeqLen() const;
 
   MatPtrT<KV_t> kv_cache;
 };
@@ -65,6 +63,10 @@ struct KVCache {
   // For use by other ctor and Copy()
   KVCache(const Extents2D& kv_extents, const Allocator& allocator);
 };
+
+inline size_t KVCachePtr::SeqLen() const {
+  return kv_cache.Rows();
+}
 
 // Convenience function to create views into KVCaches.
 std::vector<KVCachePtr> ToKVCachePtrs(const hwy::Span<KVCache>& kv_caches);
