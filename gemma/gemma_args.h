@@ -194,6 +194,7 @@ struct InferenceArgs : public ArgsBase<InferenceArgs> {
   // For prompts longer than the Linux terminal's 4K line edit buffer.
   Path prompt_file;
   std::string eot_line;
+  std::string attention_impl;
 
   template <class Visitor>
   void ForEach(const Visitor& visitor) {
@@ -247,6 +248,8 @@ struct InferenceArgs : public ArgsBase<InferenceArgs> {
         "before the line where only the given string appears.\n    Default = "
         "When a newline is encountered, that signals the end of the turn.",
         2);
+    visitor(attention_impl, "attention_impl", std::string("flash"),
+            "Attention implementation to use. See configs.cc for options.", 2);
   }
 
   void CopyTo(RuntimeConfig& runtime_config) const {
@@ -268,6 +271,7 @@ struct InferenceArgs : public ArgsBase<InferenceArgs> {
 
     runtime_config.temperature = temperature;
     runtime_config.top_k = top_k;
+    runtime_config.attention_impl = GetAttentionImpl(attention_impl);
   }
 };
 

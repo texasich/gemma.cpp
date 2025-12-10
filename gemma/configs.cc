@@ -712,4 +712,11 @@ Model DeduceModel(const Path& blob_path, size_t layers, int layer_types) {
   }
 }
 
+AttentionImpl GetAttentionImpl(const std::string& impl) {
+  if (impl == "old") return AttentionImpl::kOld;
+  if (impl == "flash") return AttentionImpl::kFlash;
+  HWY_WARN("Unknown attention implementation: %s. Using kOld.\n", impl.c_str());
+  return AttentionImpl::kOld;
+}
+
 }  // namespace gcpp

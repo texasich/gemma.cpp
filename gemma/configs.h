@@ -85,6 +85,8 @@ enum class AttentionImpl {
   kFlash,
 };
 
+AttentionImpl GetAttentionImpl(const std::string& impl);
+
 /*
  * Returns a bitmask of flags to pass to attention functions based on the
  * attention implementation selected.
