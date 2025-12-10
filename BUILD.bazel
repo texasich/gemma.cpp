@@ -173,8 +173,10 @@ cc_library(
     hdrs = ["util/test_util.h"],
     deps = [
         ":basics",
+        ":mat",
         "@highway//:hwy",
         "@highway//:hwy_test_util",
+        "@highway//:nanobenchmark",
         "@highway//:stats",
     ],
 )
