@@ -99,6 +99,7 @@ class ArgsBase {
     void operator()(T& t, const char* name, const T& /*init*/,
                     const char* /*help*/, int /*print_verbosity*/ = 0) const {
       const std::string prefixed = std::string("--") + name;
+      const std::string prefixed_eq = prefixed + "=";
       for (int i = 1; i < argc_; ++i) {
         if (std::string(argv_[i]) == prefixed) {
           if (i + 1 >= argc_) {
@@ -106,6 +107,13 @@ class ArgsBase {
           }
           if (!SetValue(argv_[i + 1], t)) {
             HWY_ABORT("Invalid value for %s, got %s\n", name, argv_[i + 1]);
+          }
+          return;
+        }
+        if (std::string(argv_[i]).find(prefixed_eq) == 0) {
+          const char* value = argv_[i] + prefixed_eq.length();
+          if (!SetValue(value, t)) {
+            HWY_ABORT("Invalid value for %s, got %s\n", name, value);
           }
           return;
         }
