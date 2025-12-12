@@ -83,6 +83,7 @@ static inline bool EnumValid(LayerAttentionType type) {
 enum class AttentionImpl {
   kOld,
   kFlash,
+  kSentinel,
 };
 
 AttentionImpl GetAttentionImpl(const std::string& impl);

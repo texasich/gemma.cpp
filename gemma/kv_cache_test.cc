@@ -1,5 +1,6 @@
 #include "gemma/kv_cache.h"
 
+#include <cstddef>
 #include <vector>
 
 #include "gtest/gtest.h"
