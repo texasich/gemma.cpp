@@ -141,6 +141,7 @@ cc_test(
         ":kv_cache",
         ":mat",
         ":matmul",
+        ":query",
         ":threading_context",
         ":weights",
         "@googletest//:gtest_main",  # buildcleaner: keep
@@ -444,9 +445,9 @@ cc_test(
         ":gemma_lib",
         ":mat",
         ":ops",
+        ":query",
         ":test_util",
         ":threading_context",
-        ":zones",
         "@googletest//:gtest_main",  # buildcleaner: keep
         "//compression:test_util",
         "//compression:types",
@@ -537,6 +538,17 @@ cc_test(
 )
 
 cc_library(
+    name = "query",
+    hdrs = ["gemma/query.h"],
+    deps = [
+        ":basics",
+        ":gemma_args",
+        ":kv_cache",
+        "@highway//:hwy",
+    ],
+)
+
+cc_library(
     name = "gemma_args",
     hdrs = ["gemma/gemma_args.h"],
     deps = [
@@ -586,7 +598,7 @@ cc_library(
         ":matmul_env",
         ":model_store",
         ":ops",
-        ":test_util",
+        ":query",
         ":threading",
         ":threading_context",
         ":weights",
@@ -620,6 +632,7 @@ cc_test(
         ":kv_cache",
         ":mat",
         ":matmul_env",
+        ":query",
         ":test_util",
         ":threading_context",
         ":weights",
