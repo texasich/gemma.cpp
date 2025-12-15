@@ -628,7 +628,7 @@ static void GenerateTWithContinuousBatching(
   const SampleFunc sample_token =
       ChooseSampleFunc(runtime_config, engine, env.ctx);
 
-  int query_inserted = 0;
+  size_t query_inserted = 0;
   while (non_eos.Any() || query_inserted < all_queries.NumQueries()) {
     for (size_t qi = 0; qi < qbatch.Size(); ++qi) {
       // Continue if qi slot is still processing.

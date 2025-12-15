@@ -107,6 +107,7 @@ static inline int AttentionImplToFlags(AttentionImpl impl,
     case AttentionImpl::kOld:
       return kAttentionUseOld;
     case AttentionImpl::kFlash:
+    default:
       return 0;
   }
 }

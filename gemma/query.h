@@ -131,7 +131,7 @@ class QBatch {
     HWY_DASSERT(size_ != 0);
     HWY_DASSERT(start_ + size_ <= queries_.NumQueries());
     query_idx_.reserve(size_);
-    for (int i = 0; i < size_; ++i) {
+    for (size_t i = 0; i < size_; ++i) {
       query_idx_.push_back(start_ + i);
     }
   }
