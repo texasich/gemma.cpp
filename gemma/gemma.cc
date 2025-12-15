@@ -738,17 +738,16 @@ HWY_EXPORT(GenerateSingleT);
 HWY_EXPORT(GenerateBatchT);
 HWY_EXPORT(GenerateImageTokensT);
 
-Gemma::Gemma(const LoaderArgs& loader, const InferenceArgs& inference,
-             ThreadingContext& ctx)
-    : reader_(loader.weights),
-      model_(reader_, loader.tokenizer, loader.wrapping),
+Gemma::Gemma(const GemmaArgs& args, ThreadingContext& ctx)
+    : reader_(args.loader.weights),
+      model_(reader_, args.loader.tokenizer, args.loader.wrapping),
       weights_(model_.Config()),
       chat_template_(model_.Tokenizer(), model_.Config().model),
-      inference_(inference),
-      aes_ctr_engine_(inference.deterministic) {
+      inference_(args.inference),
+      aes_ctr_engine_(args.inference.deterministic) {
   // Negligible CPU time in the ctor body (except ReadFromBlobs).
-  weight_read_mode_ = weights_.ReadFromBlobs(model_, reader_, loader, inference,
-                                             mat_owners_, ctx);
+  weight_read_mode_ = weights_.ReadFromBlobs(model_, reader_, args.loader,
+                                             args.inference, mat_owners_, ctx);
   // Read everything into memory, or `weights_.mapped_` keeps the mapping alive.
   reader_.CloseFile();
 }

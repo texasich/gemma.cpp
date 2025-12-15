@@ -22,12 +22,63 @@
 
 #include <algorithm>  // std::transform
 #include <string>
+#include <vector>
 
 #include "io/io.h"        // Path
 #include "util/basics.h"  // Tristate
 #include "hwy/base.h"  // HWY_ABORT
 
 namespace gcpp {
+
+// For checking which args were not matched/consumed. Passed to each `*Args`
+// ctor that parses argc/argv to ensure that their args are tracked, without
+// requiring global state.
+class ConsumedArgs {
+ public:
+  ConsumedArgs(int argc, char** argv) : argv_(argv), consumed_(argc) {
+    // We assume argc >= 1, because argv[0] is the binary name. That allows us
+    // to signal "called AbortIfUnconsumed" with an empty vector.
+    HWY_ASSERT(!consumed_.empty());
+  }
+
+  ~ConsumedArgs() {
+    if (HWY_UNLIKELY(!consumed_.empty())) {
+      HWY_ABORT("AbortIfUnconsumed was not called.");
+    }
+  }
+
+  void NotifyConsumed(size_t idx) {
+    HWY_ASSERT(idx < consumed_.size());
+    HWY_ASSERT(consumed_[idx] == 0);
+    consumed_[idx] = 1;
+  }
+
+  // Returns index of first unconsumed arg, or 0 if none. Also disarms the
+  // warning in the dtor checking whether this/`AbortIfUnconsumed` were called.
+  size_t FirstUnconsumed() {
+    // Ignore argv[0], which is the binary name.
+    for (size_t i = 1; i < consumed_.size(); ++i) {
+      if (HWY_UNLIKELY(consumed_[i] == 0)) {
+        consumed_.clear();
+        return i;
+      }
+    }
+
+    consumed_.clear();
+    return 0;
+  }
+
+  void AbortIfUnconsumed() {
+    const size_t i = FirstUnconsumed();
+    if (HWY_UNLIKELY(i != 0)) {
+      HWY_ABORT("Unrecognized arg %zu: %s\n", i, argv_[i]);
+    }
+  }
+
+ private:
+  char** argv_;
+  std::vector<uint8_t> consumed_;
+};
 
 // Args is a class that provides a ForEach member function which visits each of
 // its member variables. ArgsBase provides functions called by Args to
@@ -93,7 +144,8 @@ class ArgsBase {
   // consider adding a hash-map to speed this up.
   class ParseVisitor {
    public:
-    ParseVisitor(int argc, char* argv[]) : argc_(argc), argv_(argv) {}
+    ParseVisitor(int argc, char* argv[], ConsumedArgs& consumed)
+        : argc_(argc), argv_(argv), consumed_(consumed) {}
 
     template <typename T>
     void operator()(T& t, const char* name, const T& /*init*/,
@@ -108,6 +160,8 @@ class ArgsBase {
           if (!SetValue(argv_[i + 1], t)) {
             HWY_ABORT("Invalid value for %s, got %s\n", name, argv_[i + 1]);
           }
+          consumed_.NotifyConsumed(i);
+          consumed_.NotifyConsumed(i + 1);
           return;
         }
         if (std::string(argv_[i]).find(prefixed_eq) == 0) {
@@ -115,6 +169,7 @@ class ArgsBase {
           if (!SetValue(value, t)) {
             HWY_ABORT("Invalid value for %s, got %s\n", name, value);
           }
+          consumed_.NotifyConsumed(i);
           return;
         }
       }
@@ -181,8 +236,9 @@ class ArgsBase {
       }
     }
 
-    int argc_;
-    char** argv_;
+    const int argc_;
+    char** const argv_;
+    ConsumedArgs& consumed_;
   };  // ParseVisitor
 
   template <class Visitor>
@@ -211,15 +267,15 @@ class ArgsBase {
     ForEach(visitor);
   }
 
-  void Parse(int argc, char* argv[]) {
-    ParseVisitor visitor(argc, argv);
+  void Parse(int argc, char* argv[], ConsumedArgs& consumed) {
+    ParseVisitor visitor(argc, argv, consumed);
     ForEach(visitor);
   }
 
   // For convenience, enables single-line constructor.
-  void InitAndParse(int argc, char* argv[]) {
+  void InitAndParse(int argc, char* argv[], ConsumedArgs& consumed) {
     Init();
-    Parse(argc, argv);
+    Parse(argc, argv, consumed);
   }
 };
 

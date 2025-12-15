@@ -22,7 +22,6 @@
 
 #include "evals/benchmark_helper.h"
 #include "gemma/configs.h"
-#include "io/io.h"
 #include "hwy/base.h"
 #include "hwy/tests/hwy_gtest.h"
 
@@ -42,7 +41,11 @@ class GemmaTest : public ::testing::Test {
   // Requires argc/argv, hence do not use `SetUpTestSuite`.
   static void InitEnv(int argc, char** argv) {
     HWY_ASSERT(s_env == nullptr);  // Should only be called once.
-    s_env = new GemmaEnv(argc, argv);
+    ConsumedArgs consumed(argc, argv);
+    GemmaArgs args(argc, argv, consumed);
+    consumed.AbortIfUnconsumed();
+
+    s_env = new GemmaEnv(args);
     const gcpp::ModelConfig& config = s_env->GetGemma()->Config();
     fprintf(stderr, "Using %s\n", config.Specifier().c_str());
   }

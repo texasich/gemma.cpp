@@ -38,7 +38,9 @@ namespace gcpp {
 // Optional arguments for `ThreadingContext` from the command line.
 class ThreadingArgs : public ArgsBase<ThreadingArgs> {
  public:
-  ThreadingArgs(int argc, char* argv[]) { InitAndParse(argc, argv); }
+  ThreadingArgs(int argc, char* argv[], ConsumedArgs& consumed) {
+    InitAndParse(argc, argv, consumed);
+  }
   ThreadingArgs() { Init(); };
 
   // For BoundedTopology:

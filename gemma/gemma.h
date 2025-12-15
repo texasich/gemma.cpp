@@ -130,11 +130,16 @@ struct TimingInfo {
 // separate `ThreadingContext` and `MatMulEnv` for each concurrent `Generate`.
 class Gemma {
  public:
-  // Reads weights/config/tokenizer from the `BlobStore` at `loader.weights`.
+  // Reads weights/config/tokenizer from `BlobStore` at `args.loader.weights`.
   // `ctx` is only used to read tensors and not stored. Calls to `Generate*`
   // may reference the same, or other `ThreadingContext` via `MatMulEnv`.
+  Gemma(const GemmaArgs& args, ThreadingContext& ctx);
+
+  // Deprecated prior interface for backwards compatibility.
   Gemma(const LoaderArgs& loader, const InferenceArgs& inference,
-        ThreadingContext& ctx);
+        ThreadingContext& ctx)
+      : Gemma(GemmaArgs(loader, ThreadingArgs(), inference), ctx) {}
+
   ~Gemma();
 
   const ModelConfig& Config() const { return model_.Config(); }

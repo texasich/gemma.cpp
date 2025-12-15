@@ -556,9 +556,19 @@ cc_library(
         ":basics",
         ":configs",
         ":mat",
+        ":threading_context",
         "//io",
         "@highway//:hwy",
         "@highway//:profiler",
+    ],
+)
+
+cc_test(
+    name = "gemma_args_test",
+    srcs = ["gemma/gemma_args_test.cc"],
+    deps = [
+        ":gemma_args",
+        "@googletest//:gtest_main",  # buildcleaner: keep
     ],
 )
 
@@ -666,7 +676,6 @@ cc_library(
         ":gemma_args",
         ":gemma_lib",
         ":matmul_env",
-        ":ops",
         ":threading_context",
         ":tokenizer",
         "@google_benchmark//:benchmark",

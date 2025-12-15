@@ -146,7 +146,11 @@ TEST_F(GemmaBatchBench, RandomQuestionsBatched) {
 
 int main(int argc, char** argv) {
   fprintf(stderr, "GemmaEnv setup..\n");
-  gcpp::GemmaEnv env(argc, argv);
+  gcpp::ConsumedArgs consumed(argc, argv);
+  gcpp::GemmaArgs args(argc, argv, consumed);
+  consumed.AbortIfUnconsumed();
+
+  gcpp::GemmaEnv env(args);
   gcpp::s_env = &env;
 
   testing::InitGoogleTest(&argc, argv);

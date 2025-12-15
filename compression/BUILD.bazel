@@ -101,13 +101,11 @@ cc_test(
     # for test_suite.
     tags = ["hwy_ops_test"],
     deps = [
-        ":distortion",
         ":int",
         "@googletest//:gtest_main",  # buildcleaner: keep
         "//:test_util",
         "@highway//:hwy",
         "@highway//:hwy_test_util",
-        "@highway//:nanobenchmark",
     ],
 )
 
