@@ -454,6 +454,21 @@ decltype(auto) CallUpcastedActivation(const MatPtr* base, const Func& func,
   }
 }
 
+// Like CallUpcasted, but only for kv_cache types: kBF16 and kF32.
+template <class Func, typename... Args>
+decltype(auto) CallUpcastedKV(const MatPtr* base, const Func& func,
+                                      Args&&... args) {
+  if (base->GetType() == Type::kF32) {
+    const MatPtrT<float> mat(*base);
+    return func(&mat, std::forward<Args>(args)...);
+  } else if (base->GetType() == Type::kBF16) {
+    const MatPtrT<BF16> mat(*base);
+    return func(&mat, std::forward<Args>(args)...);
+  } else {
+    HWY_ABORT("Unhandled type %s.", TypeName(base->GetType()));
+  }
+}
+
 void CopyMat(const MatPtr& from, MatPtr& to);
 void ZeroInit(MatPtr& mat);
 

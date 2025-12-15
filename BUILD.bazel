@@ -142,6 +142,7 @@ cc_test(
         ":mat",
         ":matmul",
         ":query",
+        ":test_util",
         ":threading_context",
         ":weights",
         "@googletest//:gtest_main",  # buildcleaner: keep

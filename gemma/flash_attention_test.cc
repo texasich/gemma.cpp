@@ -14,6 +14,8 @@
 // limitations under the License.
 
 #include <cstring>
+#include <iostream>
+#include <limits>
 #include <numeric>
 #include <vector>
 
@@ -24,6 +26,7 @@
 #include "gemma/kv_cache.h"
 #include "gemma/weights.h"
 #include "ops/matmul.h"
+#include "util/test_util.h"
 #ifndef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS GEMMA_DISABLED_TARGETS
 #endif  // HWY_DISABLED_TARGETS
