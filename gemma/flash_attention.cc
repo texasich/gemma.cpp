@@ -498,7 +498,7 @@ static void HWY_INLINE FlashAttentionTileStepAndApplySoftCap(
   hn::Store(new_max, df4, tmp_max);
   if constexpr (kNumQueries >= 1) {
     const VF new_max_0 = hn::Set(df, tmp_max[0]);
-    x_0_p0 = hn::Exp(df, hn::Sub(x_0_p0 , new_max_0));
+    x_0_p0 = hn::Exp(df, hn::Sub(x_0_p0, new_max_0));
     x_0_p1 = hn::Exp(df, hn::Sub(x_0_p1, new_max_0));
   }
   if constexpr (kNumQueries >= 2) {
