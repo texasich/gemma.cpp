@@ -606,11 +606,7 @@ cc_library(
     ],
     deps = [
         ":activations",
-        ":allocator",
-        ":basics",
         ":configs",
-        ":gemma_args",
-        ":kv_cache",
         ":mat",
         ":matmul",
         ":matmul_env",
@@ -623,13 +619,8 @@ cc_library(
         ":zones",
         "//compression:compress",
         "//compression:types",
-        "//io",
-        "@highway//:bit_set",
         "@highway//:hwy",
-        "@highway//:nanobenchmark",  # timer
         "@highway//:profiler",
-        "@highway//:thread_pool",
-        "@highway//hwy/contrib/sort:vqsort",
     ],
 )
 

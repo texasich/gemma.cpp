@@ -483,7 +483,7 @@ static void HWY_INLINE FlashAttentionTileStepAndApplySoftCap(
     new_max = hn::InsertLane(new_max, 0, hn::ReduceMax(df, max_0));
   } else {
     new_max = Reduce4(df, max_0, max_1, max_2, max_3,
-                             [](auto a, auto b) { return hn::Max(a, b); });
+                      [](auto a, auto b) HWY_ATTR { return hn::Max(a, b); });
   }
   if (att_cap > 0.0f) {
     VF4 cap = hn::Set(df4, att_cap);
@@ -531,7 +531,7 @@ static void HWY_INLINE FlashAttentionTileStepAndApplySoftCap(
     VF x_2_sum = hn::Add(x_2_p0, x_2_p1);
     VF x_3_sum = hn::Add(x_3_p0, x_3_p1);
     x_sum = Reduce4(df, x_0_sum, x_1_sum, x_2_sum, x_3_sum,
-                           [](auto a, auto b) { return hn::Add(a, b); });
+                    [](auto a, auto b) HWY_ATTR { return hn::Add(a, b); });
   }
   old_d_vf = hn::Add(scale, x_sum);
   auto non_zero_mask = hn::Gt(old_d_vf, hn::Set(df4, 0.0f));
