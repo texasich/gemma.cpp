@@ -590,6 +590,8 @@ cc_test(
     ],
 )
 
+INTERNAL_DEPS = []
+
 cc_library(
     name = "attention",
     srcs = [
@@ -684,9 +686,7 @@ cc_library(
         "@highway//:stats",
         "@highway//:thread_pool",
         "@highway//hwy/contrib/sort:vqsort",
-    ] +
-    [
-    ],
+    ] + INTERNAL_DEPS,
 )
 
 cc_test(

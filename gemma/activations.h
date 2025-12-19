@@ -34,6 +34,8 @@
 
 namespace gcpp {
 
+typedef std::vector<float, hwy::AlignedAllocator<float>> AlignedFloatVector;
+
 // Returns the scale value to use for the query in the attention computation.
 // Also called by ops_test.
 static inline float ChooseQueryScale(const ModelConfig& config) {
