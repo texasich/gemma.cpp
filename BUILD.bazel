@@ -608,7 +608,9 @@ cc_library(
     ],
     deps = [
         ":activations",
+        ":basics",
         ":configs",
+        ":kv_cache",
         ":mat",
         ":matmul",
         ":matmul_env",

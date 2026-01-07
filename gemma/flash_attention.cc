@@ -22,10 +22,14 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <type_traits>
 #include <vector>
 
 #include "compression/types.h"  // GEMMA_DISABLED_TARGETS
 #include "gemma/flash_structs.h"
+#include "gemma/kv_cache.h"
+#include "gemma/query.h"
+#include "util/basics.h"
 #include "util/threading_context.h"
 #include "util/zones.h"
 #include "hwy/base.h"
