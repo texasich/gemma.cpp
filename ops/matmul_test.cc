@@ -95,14 +95,6 @@ HWY_INLINE void MatMulSlow(const MatPtrT<TA> A, const MatPtrT<TB> B,
       });
 }
 
-void PrintSpeed(const char* algo, const Extents2D& A_extents,
-                const Extents2D& B_extents, double elapsed) {
-  const size_t num_b = B_extents.Area();
-  // 2x because of FMA.
-  fprintf(stderr, "                     %10s: %f seconds, %.1f GFLOPS.\n", algo,
-          elapsed, 2 * 1E-9 * A_extents.rows * num_b / elapsed);
-}
-
 template <typename TA, typename TB = TA, typename TC = float>
 void TestMatMul(size_t rows_ac, size_t cols_a_rows_b, size_t cols_bc, bool add,
                 MatMulEnv& env, int line) {
