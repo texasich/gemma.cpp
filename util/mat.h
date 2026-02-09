@@ -291,6 +291,8 @@ template <typename MatT>
 class MatPtrT : public MatPtr {
  public:
   using T = MatT;
+  static_assert(TypeEnum<MatT>() != Type::kUnknown,
+                "Must only use with supported MatT.");
 
   // Default constructor for use with uninitialized views.
   MatPtrT() = default;
