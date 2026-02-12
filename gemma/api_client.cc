@@ -51,10 +51,15 @@ class APIClient {
         use_https_(port == 443),
         interactive_mode_(false) {
     if (use_https_) {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
       ssl_client_ = std::make_unique<httplib::SSLClient>(host, port);
       ssl_client_->set_read_timeout(60, 0);
       ssl_client_->set_write_timeout(60, 0);
       ssl_client_->enable_server_certificate_verification(false);
+#else
+      std::cerr << "Error: HTTPS requested but OpenSSL not found." << std::endl;
+      exit(1);
+#endif
     } else {
       client_ = std::make_unique<httplib::Client>(host, port);
       client_->set_read_timeout(60, 0);
@@ -109,8 +114,17 @@ class APIClient {
     if (!api_key_.empty()) {
       headers.emplace("X-goog-api-key", api_key_);
     }
-    auto res = use_https_ ? ssl_client_->Get("/v1beta/models", headers)
-                          : client_->Get("/v1beta/models", headers);
+    httplib::Result res;
+    if (use_https_) {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+      res = ssl_client_->Get("/v1beta/models", headers);
+#else
+      std::cerr << "Error: HTTPS requested but OpenSSL not found." << std::endl;
+      exit(1);
+#endif
+    } else {
+      res = client_->Get("/v1beta/models", headers);
+    }
 
     if (res && res->status == 200) {
       json response = json::parse(res->body);
@@ -213,11 +227,17 @@ class APIClient {
     if (!api_key_.empty()) {
       headers.emplace("X-goog-api-key", api_key_);
     }
-
-    auto res = use_https_ ? ssl_client_->Post(endpoint, headers, request.dump(),
-                                              "application/json")
-                          : client_->Post(endpoint, headers, request.dump(),
-                                          "application/json");
+    httplib::Result res;
+    if (use_https_) {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+      res = ssl_client_->Post(endpoint, headers, request.dump(), "application/json");
+#else
+      std::cerr << "Error: HTTPS requested but OpenSSL not found." << std::endl;
+      exit(1);
+#endif
+    } else {
+      res = client_->Post(endpoint, headers, request.dump(), "application/json");
+    }
 
     if (res && res->status == 200) {
       json response = json::parse(res->body);
@@ -300,8 +320,17 @@ class APIClient {
 
     httplib::Response res;
     httplib::Error error;
-    bool success = use_https_ ? ssl_client_->send(req, res, error)
-                              : client_->send(req, res, error);
+    bool success = false;
+    if (use_https_) {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+      success = ssl_client_->send(req, res, error);
+#else
+      std::cerr << "Error: HTTPS requested but OpenSSL not found." << std::endl;
+      exit(1);
+#endif
+    } else {
+      success = client_->send(req, res, error);
+    }
 
     if (res.status == 200 && !accumulated_response.empty()) {
       return json{
@@ -322,7 +351,9 @@ class APIClient {
 
  private:
   std::unique_ptr<httplib::Client> client_;
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
   std::unique_ptr<httplib::SSLClient> ssl_client_;
+#endif
   std::string host_;
   int port_;
   std::string api_key_;
