@@ -394,11 +394,11 @@ int main(int argc, char* argv[]) {
     client_args.port = 443;
   }
 
-  std::cout << BOLD << YELLOW << "🚀 Testing API Server at " << client_args.host
-            << ":" << client_args.port << RESET << std::endl;
+  std::cout << gcpp::BOLD << gcpp::YELLOW << "🚀 Testing API Server at " << client_args.host
+            << ":" << client_args.port << gcpp::RESET << std::endl;
 
   try {
-    APIClient client(client_args.host, client_args.port, client_args.api_key,
+    gcpp::APIClient client(client_args.host, client_args.port, client_args.api_key,
                      client_args.model);
 
     if (client_args.interactive) {
@@ -408,7 +408,7 @@ int main(int argc, char* argv[]) {
       client.TestGenerateContent(client_args.prompt, true);
     }
   } catch (const std::exception& e) {
-    std::cerr << RED << "❌ Error: " << e.what() << RESET << std::endl;
+    std::cerr << gcpp::RED << "❌ Error: " << e.what() << gcpp::RESET << std::endl;
     std::cerr << "Make sure the API server is running:" << std::endl;
     std::cerr
         << "  ./build/gemma_api_server --tokenizer <path> --weights <path>"
