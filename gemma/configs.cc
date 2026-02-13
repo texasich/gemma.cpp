@@ -712,9 +712,21 @@ Model DeduceModel(const Path& blob_path, size_t layers, int layer_types) {
   }
 }
 
+// Keep in sync with enum class AttentionImpl.
+const char* kAttentionImplNames[] = {
+    "old", "flash",
+    "unknown"  // keep last
+};
+
+std::string GetAttentionImplName(AttentionImpl impl) {
+  return kAttentionImplNames[static_cast<size_t>(impl)];
+}
+
 AttentionImpl GetAttentionImpl(const std::string& impl) {
-  if (impl == "old") return AttentionImpl::kOld;
-  if (impl == "flash") return AttentionImpl::kFlash;
+  if (impl == GetAttentionImplName(AttentionImpl::kOld))
+    return AttentionImpl::kOld;
+  if (impl == GetAttentionImplName(AttentionImpl::kFlash))
+    return AttentionImpl::kFlash;
   HWY_WARN("Unknown attention implementation: %s. Using kOld.\n", impl.c_str());
   return AttentionImpl::kOld;
 }

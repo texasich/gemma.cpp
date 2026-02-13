@@ -538,7 +538,7 @@ void RunAttentionTest(AttentionImpl attention_impl) {
 
   GemmaAttention(attention_state.tokens.size(), 0, model_state.layer,
                  attention_state.attention, *attention_state.qbatch, state.env,
-                 AttentionImplToFlags(attention_impl, HWY_NATIVE_DOT_BF16));
+                 attention_impl, /*flags=*/0);
 
   CompareAttSumsWithGolden(attention_state.attention, kGoldenAttSums);
   CompareKVCacheWithGolden(model_state.config,

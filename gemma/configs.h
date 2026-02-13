@@ -86,6 +86,7 @@ enum class AttentionImpl {
   kSentinel,
 };
 
+std::string GetAttentionImplName(AttentionImpl impl);
 AttentionImpl GetAttentionImpl(const std::string& impl);
 
 /*

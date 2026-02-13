@@ -325,7 +325,7 @@ static HWY_INLINE void ComputeQKV(size_t num_tokens, const size_t layer_idx,
 void GemmaAttention(size_t num_tokens, const size_t layer_idx,
                     const LayerWeightsPtrs& layer,
                     AttentionActivationsPtrs& activations, QBatch& qbatch,
-                    MatMulEnv& env, int flags) {
+                    MatMulEnv& env, AttentionImpl attention_impl, int flags) {
   GCPP_ZONE(env.ctx, hwy::Profiler::GlobalIdx(), Zones::kGenAttention);
 
   const LayerConfig& layer_config = layer.layer_config;
@@ -335,7 +335,7 @@ void GemmaAttention(size_t num_tokens, const size_t layer_idx,
   (void)layer_config;  // only used in HWY_DASSERT
 
   ComputeQKV(num_tokens, layer_idx, layer, activations, qbatch, flags, env);
-  if (flags & kAttentionUseOld) {
+  if (attention_impl == AttentionImpl::kOld) {
     DotSoftmaxWeightedSum(num_tokens, layer_idx, layer.query_norm_scale,
                           activations, qbatch, env.ctx);
   } else {
@@ -343,7 +343,7 @@ void GemmaAttention(size_t num_tokens, const size_t layer_idx,
     FlashAttention(num_tokens,
                    /*target_parallelism=*/env.ctx.pools.MaxWorkers() * 1,
                    layer_idx, layer.query_norm_scale, activations, qbatch,
-                   env.ctx);
+                   env.ctx, attention_impl);
   }
   SumHeads(layer, activations, env);
 }

@@ -59,7 +59,7 @@ namespace gcpp {
   void FlashAttention(size_t num_tokens, size_t target_parallelism,            \
                       size_t layer_idx, const MatPtr& query_norm_scale,        \
                       AttentionActivationsPtrs& activations, QBatch& qbatch,   \
-                      ThreadingContext& ctx);                                  \
+                      ThreadingContext& ctx, AttentionImpl attention_impl);    \
                                                                                \
   /* NOLINTNEXTLINE(google-readability-namespace-comments) */                  \
   }  // namespace NAMESPACE

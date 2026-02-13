@@ -822,6 +822,38 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "wheat_from_chaff_test",
+    srcs = ["evals/wheat_from_chaff_test.cc"],
+    data = [
+        "evals/testdata/google/big_bang_theory.txt",
+        "evals/testdata/google/black_hole.txt",
+        "evals/testdata/google/general_relativity.txt",
+        "evals/testdata/google/qed.txt",
+        "evals/testdata/holiday_story.txt",
+        "evals/testdata/quark_1.txt",
+        "evals/testdata/quark_2.txt",
+        "evals/testdata/special_relativity.txt",
+        "evals/testdata/standard_model.txt",
+    ],
+    linkstatic = True,
+    # Requires model files
+    tags = [
+        "local",
+        "manual",
+        "no_tap",
+    ],
+    deps = [
+        ":benchmark_helper",
+        ":configs",
+        ":gemma_lib",
+        "@googletest//:gtest_main",  # buildcleaner: keep
+        "//io",
+        "@highway//:abort_header_only",
+        "@highway//:hwy_test_util",
+    ],
+)
+
 cc_binary(
     name = "gemma",
     srcs = ["gemma/run.cc"],

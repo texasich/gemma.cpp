@@ -76,8 +76,13 @@ struct AttentionActivations {
         vit_C(MatFactory("C2", batch_size, seq_len, allocator)),
         pre_att_rms_out(MatFactory("pre_att_rms_out", batch_size,
                                    config.model_dim, allocator)),
-        att(MatFactory("att", batch_size, layer_config.heads * seq_len,
-                       allocator)),
+        // att is only valid for AttentionImpl::kOld.
+        att(MatFactory(
+            "att", batch_size,
+            layer_config.heads *
+                (runtime_config.attention_impl == AttentionImpl::kOld ? seq_len
+                                                                      : 1),
+            allocator)),
         att_out(MatFactory("att_out", batch_size,
                            layer_config.heads * layer_config.qkv_dim,
                            allocator)),

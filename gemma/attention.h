@@ -53,7 +53,8 @@ namespace gcpp {
   void GemmaAttention(size_t num_tokens, const size_t layer_idx,              \
                       const LayerWeightsPtrs& layer,                          \
                       AttentionActivationsPtrs& activations, QBatch& qbatch,  \
-                      MatMulEnv& env, int flags);                             \
+                      MatMulEnv& env, AttentionImpl attention_impl,           \
+                      int flags);                                             \
   /* NOLINTNEXTLINE(google-readability-namespace-comments) */                 \
   }  // namespace NAMESPACE
 

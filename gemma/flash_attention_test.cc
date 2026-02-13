@@ -112,7 +112,9 @@ void TestFlashAttention(size_t target_parallelism) {
   const LayerConfig& layer_config = config.layer_configs[0];
   const LayerWeightsPtrs layers(0, layer_config, tensor_info_registry);
   InferenceArgs inference_args;
-  inference_args.attention_impl = "flash";
+  // attention_impl must be old in order for the att intermediate to be
+  // allocated for the old attention.
+  inference_args.attention_impl = "old";
   RuntimeConfig runtime_config;
   inference_args.CopyTo(runtime_config);
   KVCache kv_cache(config, inference_args, ctx.allocator);
@@ -168,7 +170,7 @@ void TestFlashAttention(size_t target_parallelism) {
   printf("FlashAttention: target_parallelism=%zu, kNF=%zu, kVTileSize=%zu\n",
          target_parallelism, kNF, kVTileSize);
   FlashAttention(tokens.size(), target_parallelism, 0, layers.query_norm_scale,
-                 attention, qbatch, ctx);
+                 attention, qbatch, ctx, AttentionImpl::kFlash);
   AssertClose(attention.att_out, *saved_att);
   ctx.profiler.PrintResults();
 }

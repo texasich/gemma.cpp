@@ -62,6 +62,8 @@ class GemmaEnv {
         static_cast<size_t>(max_generated_tokens);
   }
 
+  void PrintProfileResults() { ctx_.profiler.PrintResults(); }
+
   std::vector<int> Tokenize(const std::string& input) const {
     std::vector<int> tokens;
     HWY_ASSERT(gemma_.Tokenizer().Encode(input, &tokens));

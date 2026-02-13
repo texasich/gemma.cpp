@@ -83,9 +83,8 @@ void Attention(LayerAttentionType type, const size_t num_tokens,
 
   if (type == LayerAttentionType::kGemma) {
     // TODO: remove flag to enable FlashAttention.
-    GemmaAttention(
-        num_tokens, layer_idx, layer, activations.attention, qbatch, env,
-        AttentionImplToFlags(activations.attention_impl, HWY_NATIVE_DOT_BF16));
+    GemmaAttention(num_tokens, layer_idx, layer, activations.attention, qbatch,
+                   env, activations.attention_impl, /*flags=*/0);
   }
 }
 
@@ -595,6 +594,9 @@ static void GenerateT(const ModelConfig& config,
 
   const size_t max_gen_steps = PrefillTBatchOrQBatch(
       config, runtime_config, weights, activations, qbatch, env, timing_info);
+  // No-op if the profiler is disabled, but useful to separate prefill and
+  // generate phases for profiling.
+  env.ctx.profiler.PrintResults();
 
   hwy::BitSet4096<> non_eos;  // indexed by qi
 

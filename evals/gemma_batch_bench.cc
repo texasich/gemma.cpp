@@ -37,7 +37,8 @@ GemmaEnv* s_env = nullptr;
 class GemmaBatchBench : public ::testing::Test {
  protected:
   std::vector<std::string> BatchGemmaReply(
-      const std::vector<std::string>& inputs) {
+      const std::vector<std::string>& inputs, AttentionImpl attention_impl) {
+    s_env->MutableConfig().attention_impl = attention_impl;
     s_env->MutableConfig().temperature = 0.0f;  // deterministic
     s_env->MutableConfig().verbosity = 2;
     std::vector<std::string> replies;
@@ -128,16 +129,19 @@ std::vector<std::string> GenerateInputs() {
 TEST_F(GemmaBatchBench, RandomQuestionsBatched) {
   s_env->SetMaxGeneratedTokens(12);
   const std::vector<std::string> inputs = GenerateInputs();
-
-  // Run multiple times so that auto-tuning is closer to complete.
-  for (size_t rep = 0; rep < 4; ++rep) {
-    std::vector<std::string> responses = BatchGemmaReply(inputs);
-    for (size_t i = 0; i < HWY_MIN(hwy::Unpredictable1() * 3, responses.size());
-         ++i) {
-      fprintf(stderr, "Rep %zu batch answer %zu '%s'\n\n", rep, i,
-              responses[i].c_str());
+  const AttentionImpl modes[] = {AttentionImpl::kOld, AttentionImpl::kFlash};
+  for (const AttentionImpl mode : modes) {
+    // Run multiple times so that auto-tuning is closer to complete.
+    fprintf(stderr, "Testing mode %s\n", GetAttentionImplName(mode).c_str());
+    for (size_t rep = 0; rep < 4; ++rep) {
+      std::vector<std::string> responses = BatchGemmaReply(inputs, mode);
+      for (size_t i = 0;
+           i < HWY_MIN(hwy::Unpredictable1() * 3, responses.size()); ++i) {
+        fprintf(stderr, "Rep %zu batch answer %zu '%s'\n\n", rep, i,
+                responses[i].c_str());
+      }
+      PROFILER_PRINT_RESULTS();
     }
-    PROFILER_PRINT_RESULTS();
   }
 }
 

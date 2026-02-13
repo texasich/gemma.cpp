@@ -17,12 +17,9 @@
 #include <stdint.h>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstdlib>
-#include <iostream>
 #include <limits>
-#include <type_traits>
 #include <vector>
 
 #include "compression/types.h"  // GEMMA_DISABLED_TARGETS
@@ -140,7 +137,7 @@ void RMSNormAndPositionalEncoding(const size_t num_tokens, const QBatch& qbatch,
 }
 
 // Handles a single v row of flash attention for a single q.k dot product.
-void HWY_INLINE SingleFlashAttentionStep(float x, float cap, float& old_max,
+HWY_INLINE void SingleFlashAttentionStep(float x, float cap, float& old_max,
                                          float& old_d,
                                          const float* HWY_RESTRICT v,
                                          const size_t v_cols,
@@ -805,7 +802,7 @@ size_t GetVTileSize(size_t kNF, size_t num_head_groups, size_t num_tokens,
 void FlashAttention(const size_t num_tokens, const size_t target_parallelism,
                     const size_t layer_idx, const MatPtr& query_norm_scale,
                     AttentionActivationsPtrs& activations, QBatch& qbatch,
-                    ThreadingContext& ctx) {
+                    ThreadingContext& ctx, AttentionImpl attention_impl) {
   GCPP_ZONE(ctx, 0, Zones::kFlashAttentionInclusive);
   RMSNormAndPositionalEncoding(num_tokens, qbatch, activations.q,
                                query_norm_scale, layer_idx, activations, ctx);

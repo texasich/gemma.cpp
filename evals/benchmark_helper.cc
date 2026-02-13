@@ -150,7 +150,11 @@ std::vector<QueryResult> GemmaEnv::BatchQueryModel(
 
 QueryResult GemmaEnv::QueryModel(const std::string& input) {
   const std::vector<int> prompt = WrapAndTokenize(input);
-  return QueryModel(prompt);
+  auto result = QueryModel(prompt);
+  fprintf(stderr, "prompt size: %zu, response size: %zu, total tokens: %zu\n",
+          prompt.size(), result.tokens_generated - prompt.size(),
+          result.tokens_generated);
+  return result;
 }
 
 QueryResultAndMetrics GemmaEnv::BatchQueryModelWithMetrics(
