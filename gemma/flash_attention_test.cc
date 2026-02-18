@@ -68,7 +68,7 @@ void SetMat(const size_t offset, MatPtrT<float>& mat) {
   const float i_scale = 1.0f / kInner;
   const float j_scale = 1.0f / kOuter;
   for (size_t i = 0; i < kOuter; ++i) {
-    float* HWY_RESTRICT row = mat.Row(i);
+    float* row = mat.Row(i);
     for (size_t j = 0; j < kInner; ++j) {
       row[j] =
           static_cast<float>((i * kInner * i_scale + (j + offset) * j_scale));
@@ -190,7 +190,7 @@ HWY_AFTER_NAMESPACE();
 
 namespace gcpp {
 HWY_BEFORE_TEST(FlashAttentionTest);
-// HWY_EXPORT_AND_TEST_P(FlashAttentionTest, TestAttention);
+HWY_EXPORT_AND_TEST_P(FlashAttentionTest, TestAttention);
 HWY_AFTER_TEST();
 
 }  // namespace gcpp
