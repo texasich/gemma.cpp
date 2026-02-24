@@ -22,46 +22,78 @@
 
 #include <cstdint>
 
+#include "gemma/configs.h"
 #include "gemma/flash_structs.h"
+#include "gemma/kv_cache.h"
 #include "gemma/query.h"
+#include "util/basics.h"
+#include "util/mat.h"
+#include "util/threading_context.h"
+#include "hwy/aligned_allocator.h"
 #include "hwy/highway.h"
 
 namespace gcpp {
 
 // Passed to HWY_VISIT_TARGETS; declares for one target.
-#define GEMMA_DECL_FLASH_ATTENTION(TARGET, NAMESPACE)                          \
-  namespace NAMESPACE {                                                        \
-  void RMSNormAndPositionalEncoding(                                           \
-      size_t num_tokens, const QBatch& qbatch, MatPtrT<float>& q,              \
-      const MatPtr& query_norm_scale, size_t layer_idx,                        \
-      const AttentionActivationsPtrs& activations, ThreadingContext& ctx);     \
-                                                                               \
-  void SingleFlashAttention(size_t start_pos, size_t last_pos,                 \
-                            const BF16* HWY_RESTRICT q,                        \
-                            const MatPtrT<KV_t>& k, const MatPtrT<KV_t>& v,    \
-                            size_t layer_idx,                                  \
-                            const AttentionActivationsPtrs& activations,       \
-                            float* HWY_RESTRICT att_out,                       \
-                            ThreadingContext& ctx, size_t worker);             \
-                                                                               \
-  Tile4FlashState TileFlashAttention4(                                         \
-      const MatPtrT<BF16>& q, const uint32_t* HWY_RESTRICT q_offsets,          \
-      const MatPtrT<KV_t>& k, size_t start_pos,                                \
-      const uint32_t* HWY_RESTRICT last_pos, size_t min_last_pos,              \
-      size_t max_last_pos, const MatPtrT<KV_t>& v, size_t layer_idx,           \
-      const LayerWeightsPtrs& layer, const AttentionActivations& activations,  \
-      MatPtrT<float>& att_out, const uint32_t* HWY_RESTRICT out_offsets,       \
-      ThreadingContext& ctx, const size_t worker);                             \
-                                                                               \
-  size_t GetVTileSize(size_t kNF, size_t num_head_groups, size_t num_tokens,   \
-                      size_t total_tasks, size_t target_parallelism);          \
-                                                                               \
-  void FlashAttention(size_t num_tokens, size_t target_parallelism,            \
-                      size_t layer_idx, const MatPtr& query_norm_scale,        \
-                      AttentionActivationsPtrs& activations, QBatch& qbatch,   \
-                      ThreadingContext& ctx, AttentionImpl attention_impl);    \
-                                                                               \
-  /* NOLINTNEXTLINE(google-readability-namespace-comments) */                  \
+#define GEMMA_DECL_FLASH_ATTENTION(TARGET, NAMESPACE)                        \
+  namespace NAMESPACE {                                                      \
+  void RMSNormAndPositionalEncoding(                                         \
+      size_t num_tokens, const QBatch& qbatch, MatPtrT<float>& q,            \
+      const MatPtr& query_norm_scale, size_t layer_idx,                      \
+      const AttentionActivationsPtrs& activations, ThreadingContext& ctx);   \
+                                                                             \
+  void SingleFlashAttention(size_t start_pos, size_t last_pos,               \
+                            const BF16* HWY_RESTRICT q,                      \
+                            const MatPtrT<KV_t>& k, const MatPtrT<KV_t>& v,  \
+                            size_t layer_idx,                                \
+                            const AttentionActivationsPtrs& activations,     \
+                            float* HWY_RESTRICT att_out,                     \
+                            ThreadingContext& ctx, size_t worker);           \
+                                                                             \
+  Tile4FlashState TileFlashAttention4(                                       \
+      const MatPtrT<BF16>& q, const uint32_t* HWY_RESTRICT q_offsets,        \
+      const MatPtrT<KV_t>& k, size_t start_pos,                              \
+      const uint32_t* HWY_RESTRICT last_pos, size_t min_last_pos,            \
+      size_t max_last_pos, const MatPtrT<KV_t>& v, size_t layer_idx,         \
+      const AttentionActivationsPtrs& activations, MatPtrT<float>& att_out,  \
+      const uint32_t* HWY_RESTRICT out_offsets, ThreadingContext& ctx,       \
+      const size_t worker);                                                  \
+                                                                             \
+  void TileFlashAttention(                                                   \
+      const MatPtrT<BF16>& q, const uint32_t* HWY_RESTRICT q_offsets,        \
+      const StridedView<BF16>& qT, const MatPtrT<KV_t>& k,                   \
+      const size_t start_pos, const uint32_t* HWY_RESTRICT last_pos,         \
+      const size_t min_last_pos, const size_t max_last_pos,                  \
+      const MatPtrT<KV_t>& v, const size_t layer_idx,                        \
+      const AttentionActivationsPtrs& activations, MatPtrT<float>& att_out,  \
+      const uint32_t* HWY_RESTRICT out_offsets, ThreadingContext& ctx,       \
+      const size_t worker);                                                  \
+                                                                             \
+  size_t GetVTileSize(size_t kNF, size_t num_head_groups, size_t num_tokens, \
+                      size_t total_tasks, size_t target_parallelism);        \
+                                                                             \
+  void FlashAttention(size_t num_tokens, size_t target_parallelism,          \
+                      size_t layer_idx, const MatPtr& query_norm_scale,      \
+                      AttentionActivationsPtrs& activations, QBatch& qbatch, \
+                      ThreadingContext& ctx, AttentionImpl attention_impl);  \
+                                                                             \
+  void DispatchTileFlashAttentionReturnExpSumsAndMaxLogits(                  \
+      hwy::Span<const MatPtr> kvs, int q_count,                              \
+      const hwy::Span<const float* HWY_RESTRICT> q_T_in_groups_up_to_4,      \
+      hwy::Span<const size_t> start_pos_per_query,                           \
+      hwy::Span<const size_t> last_pos_per_query, const float att_cap,       \
+      MatPtrT<float>& att_out, float* HWY_RESTRICT exp_denominator_sums,     \
+      float* HWY_RESTRICT max_logits);                                       \
+                                                                             \
+  void DispatchTileFlashAttentionReturnExpSumsAndMaxLogitsBF16(              \
+      hwy::Span<const MatPtr> kvs, int q_count,                              \
+      const hwy::Span<const BF16 * HWY_RESTRICT> q_T_in_groups_up_to_4,      \
+      hwy::Span<const size_t> start_pos_per_query,                           \
+      hwy::Span<const size_t> last_pos_per_query, const float att_cap,       \
+      MatPtrT<float>& att_out, float* HWY_RESTRICT exp_denominator_sums,     \
+      float* HWY_RESTRICT max_logits);                                       \
+                                                                             \
+  /* NOLINTNEXTLINE(google-readability-namespace-comments) */                \
   }  // namespace NAMESPACE
 
 // Function declarations for each SIMD target. Allows direct call from the

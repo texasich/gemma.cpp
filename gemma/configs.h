@@ -83,6 +83,8 @@ static inline bool EnumValid(LayerAttentionType type) {
 enum class AttentionImpl {
   kOld,
   kFlash,
+  kFlashTransposedQs,
+  kFlashTransposedQsBF16,
   kSentinel,
 };
 
@@ -108,6 +110,8 @@ static inline int AttentionImplToFlags(AttentionImpl impl,
     case AttentionImpl::kOld:
       return kAttentionUseOld;
     case AttentionImpl::kFlash:
+    case AttentionImpl::kFlashTransposedQs:
+    case AttentionImpl::kFlashTransposedQsBF16:
     default:
       return 0;
   }

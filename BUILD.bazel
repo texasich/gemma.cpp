@@ -652,10 +652,12 @@ cc_library(
     name = "gemma_lib",
     srcs = [
         "gemma/gemma.cc",
+        "gemma/tiled_attention.cc",
         "gemma/vit.cc",
     ],
     hdrs = [
         "gemma/gemma.h",
+        "gemma/tiled_attention.h",
         "gemma/vit.h",
     ],
     exec_properties = {

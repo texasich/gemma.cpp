@@ -148,6 +148,14 @@ struct RuntimeConfig {
   // Which attention implementation to use.
   AttentionImpl attention_impl = AttentionImpl::kFlash;
 
+  // Right now it only work for tiled kv cache, implementations.
+  // If not set, it will be set based on the attention_impl.
+  // F32 for tiled
+  // BF16 for tiled bf16
+  // If you want to use type other than F32 or BF16, you might need to update
+  // call upcasted.
+  std::optional<Type> kv_cache_type = {};
+
   // Functions operating on the generated tokens.
   StreamFunc stream_token;
   BatchStreamFunc batch_stream_token;

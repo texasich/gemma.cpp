@@ -153,6 +153,14 @@ struct AttentionActivations {
   // Accumulation of attention outputs over heads
   MatStorageT<BF16> att_sums;
 
+  MatStorageT<float> k_tile_vec;
+  MatStorageT<float> v_tile_vec;
+  std::vector<MatStorageT<float>> sub_task_att_out;
+  std::vector<AlignedFloatVector>
+      sub_task_exp_denominator_sums;
+  std::vector<AlignedFloatVector>
+      sub_task_max_logits;
+
   // Rope
   MatStorageT<float> inv_timescale;
   MatStorageT<float> inv_timescale_global;
@@ -244,6 +252,16 @@ struct AttentionActivationsPtrs {
   // Accumulation of attention outputs over heads, size batch_size x
   // model_dim.
   MatPtrT<BF16> att_sums;
+  // Stores intermediate results of computing QKV,
+  // [qbatch * kv_heads , k_tile_size * qkv_dim]
+  MatPtrT<float> k_tile_vec;
+  MatPtrT<float> v_tile_vec;
+  // Used by TiledFlashAttention to store intermediate results.
+  std::vector<MatStorageT<float>>* sub_task_att_out;
+  std::vector<AlignedFloatVector>*
+      sub_task_exp_denominator_sums;
+  std::vector<AlignedFloatVector>*
+      sub_task_max_logits;
   // Inverse timescales for RoPE computation.
   MatPtrT<float> inv_timescale;
   // Inverse timescales for global RoPE computation.

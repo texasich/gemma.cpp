@@ -42,7 +42,8 @@
 // After highway.h
 #include "gemma/attention.h"  // includes highway.h
 #include "gemma/gemma-inl.h"
-#include "gemma/vit.h"  // includes highway.h
+#include "gemma/tiled_attention.h"  // includes highway.h
+#include "gemma/vit.h"              // includes highway.h
 
 #ifndef GEMMA_CC_ONCE
 #define GEMMA_CC_ONCE
@@ -80,6 +81,14 @@ namespace HWY_NAMESPACE {
 void Attention(LayerAttentionType type, const size_t num_tokens,
                const size_t layer_idx, const LayerWeightsPtrs& layer,
                Activations& activations, QBatch& qbatch, MatMulEnv& env) {
+  if (activations.attention_impl == AttentionImpl::kFlashTransposedQs ||
+      activations.attention_impl == AttentionImpl::kFlashTransposedQsBF16) {
+    TiledAttention(
+        activations.attention_impl, num_tokens, layer_idx, layer,
+        activations.attention, qbatch, env,
+        AttentionImplToFlags(activations.attention_impl, HWY_NATIVE_DOT_BF16));
+    return;
+  }
 
   if (type == LayerAttentionType::kGemma) {
     // TODO: remove flag to enable FlashAttention.

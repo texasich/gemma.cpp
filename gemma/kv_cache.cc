@@ -51,10 +51,72 @@ KVCache::KVCache(const ModelConfig& config, const InferenceArgs& inference_args,
           Extents2D(CappedSeqLen(config, inference_args), config.KVCacheCols()),
           allocator) {}
 
+KVCache::KVCache(const ModelConfig& config, const InferenceArgs& inference_args,
+                 const RuntimeConfig& runtime_config,
+                 const Allocator& allocator)
+    : allocator_(allocator) {
+  if (runtime_config.attention_impl == AttentionImpl::kFlashTransposedQs ||
+      runtime_config.attention_impl == AttentionImpl::kFlashTransposedQsBF16
+  ) {
+    const size_t num_tiles =
+        hwy::DivCeil(CappedSeqLen(config, inference_args), kTileSize);
+    tiled_seq_len = num_tiles * kTileSize;
+    int tile_length = 2 * config.layer_configs[0].qkv_dim * kTileSize;
+    Type kv_cache_type;
+    if (runtime_config.attention_impl == AttentionImpl::kFlashTransposedQsBF16
+        ) {
+      kv_cache_type = runtime_config.kv_cache_type.value_or(Type::kBF16);
+    } else {
+      kv_cache_type = runtime_config.kv_cache_type.value_or(Type::kF32);
+    }
+    auto num_tiles_per_head = [](size_t window_size, size_t prefill_tbatch_size,
+                                 size_t max_seq_len) {
+      return hwy::DivCeil(
+          std::min(max_seq_len, window_size + prefill_tbatch_size), kTileSize);
+    };
+
+    size_t total_num_tiles = 0;
+    for (size_t window_size : config.attention_window_sizes) {
+      total_num_tiles +=
+          num_tiles_per_head(window_size, runtime_config.prefill_tbatch_size,
+                             config.max_seq_len) *
+          config.layer_configs[0].kv_heads;
+    }
+    Extents2D extents(total_num_tiles, tile_length);
+    compact_kv_cache_ptr = MatPtr("kv_tiled", kv_cache_type, extents);
+    compact_kv_cache.AllocateFor(compact_kv_cache_ptr, allocator,
+                                 MatPadding::kPacked);
+    total_num_tiles = 0;
+    kv_head_ptrs.reserve(config.attention_window_sizes.size() *
+                         config.layer_configs[0].kv_heads);
+    for (size_t window_size : config.attention_window_sizes) {
+      for (size_t kv = 0; kv < config.layer_configs[0].kv_heads; ++kv) {
+        size_t num_tiles_per_kv_head =
+            num_tiles_per_head(window_size, runtime_config.prefill_tbatch_size,
+                               config.max_seq_len);
+        MatPtr kv_ptr("kv_ptr", kv_cache_type,
+                      Extents2D(num_tiles_per_kv_head, tile_length));
+        kv_ptr.SetPtr(compact_kv_cache_ptr.RowBytes(total_num_tiles),
+                      compact_kv_cache_ptr.Stride());
+        kv_head_ptrs.emplace_back(std::move(kv_ptr));
+        total_num_tiles += num_tiles_per_kv_head;
+      }
+    }
+  } else {
+    kv_cache = MatStorageT<KV_t>(
+        "kv",
+        Extents2D(CappedSeqLen(config, inference_args), config.KVCacheCols()),
+        allocator, MatPadding::kOdd);
+  }
+}
+
 KVCache KVCache::Copy() {
   KVCache copy(kv_cache.Extents(), allocator_);
 
   CopyMat(kv_cache, copy.kv_cache);
+
+  CopyMat(compact_kv_cache_ptr, copy.compact_kv_cache_ptr);
+  copy.tiled_seq_len = tiled_seq_len;
   return copy;
 }
 

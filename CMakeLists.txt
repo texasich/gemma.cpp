@@ -93,6 +93,8 @@ set(SOURCES
   gemma/model_store.h
   gemma/tensor_info.cc
   gemma/tensor_info.h
+  gemma/tiled_attention.cc
+  gemma/tiled_attention.h
   gemma/tokenizer.cc
   gemma/tokenizer.h
   gemma/vit.cc
@@ -171,20 +173,20 @@ install(TARGETS libgemma DESTINATION lib)
 if(BUILD_GEMMA_DLL)
     add_library(gemma_shared SHARED ${SOURCES})
 set_property(TARGET gemma_shared PROPERTY CXX_STANDARD 17)
-set_target_properties(gemma_shared PROPERTIES 
+set_target_properties(gemma_shared PROPERTIES
     PREFIX ""
     OUTPUT_NAME "gemma"
 )
 set_property(TARGET gemma_shared PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_include_directories(gemma_shared PUBLIC ./)
-target_link_libraries(gemma_shared PRIVATE 
+target_link_libraries(gemma_shared PRIVATE
     $<LINK_LIBRARY:WHOLE_ARCHIVE,hwy>
     $<LINK_LIBRARY:WHOLE_ARCHIVE,hwy_contrib>
     $<LINK_LIBRARY:WHOLE_ARCHIVE,sentencepiece-static>
 )
 target_include_directories(gemma_shared PUBLIC ${sentencepiece_SOURCE_DIR})
-target_compile_definitions(gemma_shared 
-    PRIVATE 
+target_compile_definitions(gemma_shared
+    PRIVATE
     GEMMA_EXPORTS
     $<$<PLATFORM_ID:Windows>:_CRT_SECURE_NO_WARNINGS NOMINMAX>
 )

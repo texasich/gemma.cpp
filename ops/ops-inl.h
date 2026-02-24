@@ -1026,6 +1026,450 @@ HWY_NOINLINE HWY_MAYBE_UNUSED void MulByConstAndAddTile4(
   }
   HWY_DASSERT(size == i);
 }
+template <int32_t N, typename DF, class VF = hn::Vec<DF>>
+static HWY_INLINE void StoreUpTo8Times2(DF df, MatPtrT<float>& out,
+                                        size_t start_col, VF out0_0, VF out0_1,
+                                        VF out1_0, VF out1_1, VF out2_0,
+                                        VF out2_1, VF out3_0, VF out3_1,
+                                        VF out4_0, VF out4_1, VF out5_0,
+                                        VF out5_1, VF out6_0, VF out6_1,
+                                        VF out7_0, VF out7_1) {
+  namespace hn = hwy::HWY_NAMESPACE;
+  HWY_LANES_CONSTEXPR size_t NF = hn::Lanes(df);
+  hn::Store(out0_0, df, out.Row(0) + start_col);
+  hn::Store(out0_1, df, out.Row(0) + start_col + NF);
+  if constexpr (N >= 2) {
+    hn::Store(out1_0, df, out.Row(1) + start_col);
+    hn::Store(out1_1, df, out.Row(1) + start_col + NF);
+  }
+  if constexpr (N >= 3) {
+    hn::Store(out2_0, df, out.Row(2) + start_col);
+    hn::Store(out2_1, df, out.Row(2) + start_col + NF);
+  }
+  if constexpr (N >= 4) {
+    hn::Store(out3_0, df, out.Row(3) + start_col);
+    hn::Store(out3_1, df, out.Row(3) + start_col + NF);
+  }
+  if constexpr (N >= 5) {
+    hn::Store(out4_0, df, out.Row(4) + start_col);
+    hn::Store(out4_1, df, out.Row(4) + start_col + NF);
+  }
+  if constexpr (N >= 6) {
+    hn::Store(out5_0, df, out.Row(5) + start_col);
+    hn::Store(out5_1, df, out.Row(5) + start_col + NF);
+  }
+  if constexpr (N >= 7) {
+    hn::Store(out6_0, df, out.Row(6) + start_col);
+    hn::Store(out6_1, df, out.Row(6) + start_col + NF);
+  }
+  if constexpr (N >= 8) {
+    hn::Store(out7_0, df, out.Row(7) + start_col);
+    hn::Store(out7_1, df, out.Row(7) + start_col + NF);
+  }
+}
+
+template <int N, typename DF, class VF = hn::Vec<DF>>
+static HWY_INLINE void LoadAndMulUpTo8Times2(
+    DF df, MatPtrT<float>& out, size_t column, const float* HWY_RESTRICT scales,
+    VF& out0_0, VF& out0_1, VF& out1_0, VF& out1_1, VF& out2_0, VF& out2_1,
+    VF& out3_0, VF& out3_1, VF& out4_0, VF& out4_1, VF& out5_0, VF& out5_1,
+    VF& out6_0, VF& out6_1, VF& out7_0, VF& out7_1) {
+  namespace hn = hwy::HWY_NAMESPACE;
+  HWY_LANES_CONSTEXPR size_t NF = hn::Lanes(df);
+  out0_0 = hn::Load(df, out.Row(0) + column);
+  out0_0 = hn::Mul(out0_0, hn::Set(df, scales[0]));
+  out0_1 = hn::Load(df, out.Row(0) + column + NF);
+  out0_1 = hn::Mul(out0_1, hn::Set(df, scales[0]));
+  if constexpr (N >= 2) {
+    out1_0 = hn::Load(df, out.Row(1) + column);
+    out1_0 = hn::Mul(out1_0, hn::Set(df, scales[1]));
+    out1_1 = hn::Load(df, out.Row(1) + column + NF);
+    out1_1 = hn::Mul(out1_1, hn::Set(df, scales[1]));
+  }
+  if constexpr (N >= 3) {
+    out2_0 = hn::Load(df, out.Row(2) + column);
+    out2_0 = hn::Mul(out2_0, hn::Set(df, scales[2]));
+    out2_1 = hn::Load(df, out.Row(2) + column + NF);
+    out2_1 = hn::Mul(out2_1, hn::Set(df, scales[2]));
+  }
+  if constexpr (N >= 4) {
+    out3_0 = hn::Load(df, out.Row(3) + column);
+    out3_0 = hn::Mul(out3_0, hn::Set(df, scales[3]));
+    out3_1 = hn::Load(df, out.Row(3) + column + NF);
+    out3_1 = hn::Mul(out3_1, hn::Set(df, scales[3]));
+  }
+  if constexpr (N >= 5) {
+    out4_0 = hn::Load(df, out.Row(4) + column);
+    out4_0 = hn::Mul(out4_0, hn::Set(df, scales[4]));
+    out4_1 = hn::Load(df, out.Row(4) + column + NF);
+    out4_1 = hn::Mul(out4_1, hn::Set(df, scales[4]));
+  }
+  if constexpr (N >= 6) {
+    out5_0 = hn::Load(df, out.Row(5) + column);
+    out5_0 = hn::Mul(out5_0, hn::Set(df, scales[5]));
+    out5_1 = hn::Load(df, out.Row(5) + column + NF);
+    out5_1 = hn::Mul(out5_1, hn::Set(df, scales[5]));
+  }
+  if constexpr (N >= 7) {
+    out6_0 = hn::Load(df, out.Row(6) + column);
+    out6_0 = hn::Mul(out6_0, hn::Set(df, scales[6]));
+    out6_1 = hn::Load(df, out.Row(6) + column + NF);
+    out6_1 = hn::Mul(out6_1, hn::Set(df, scales[6]));
+  }
+  if constexpr (N >= 8) {
+    out7_0 = hn::Load(df, out.Row(7) + column);
+    out7_0 = hn::Mul(out7_0, hn::Set(df, scales[7]));
+    out7_1 = hn::Load(df, out.Row(7) + column + NF);
+    out7_1 = hn::Mul(out7_1, hn::Set(df, scales[7]));
+  }
+}
+
+template <int32_t N, class DF, class VF = hn::Vec<DF>, typename VType>
+HWY_INLINE HWY_MAYBE_UNUSED void MulByConstAndAddTileUpTo8(
+    DF df, const float* HWY_RESTRICT scales, const VF& c0_p0, const VF& c0_p1,
+    const VF& c1_p0, const VF& c1_p1, const VF& c2_p0, const VF& c2_p1,
+    const VF& c3_p0, const VF& c3_p1, const VF& c4_p0, const VF& c4_p1,
+    const VF& c5_p0, const VF& c5_p1, const VF& c6_p0, const VF& c6_p1,
+    const VF& c7_p0, const VF& c7_p1, const VType* HWY_RESTRICT v_tile,
+    MatPtrT<float>& out) {
+  static_assert(N <= 8);
+  namespace hn = hwy::HWY_NAMESPACE;
+  const size_t qkv_dim = out.Cols();
+  constexpr size_t kMaxLanes = hn::MaxLanes(df);
+  HWY_LANES_CONSTEXPR size_t NF = hn::Lanes(df);
+
+  PackedSpan<const VType> v_span = MakeConstSpan(v_tile, qkv_dim * 2 * NF);
+
+  size_t i = 0;
+  HWY_DASSERT(qkv_dim % (NF * 2) == 0);
+  HWY_ALIGN float consts_buffer[kMaxLanes * N * 2];
+  hn::Store(c0_p0, df, consts_buffer);
+  hn::Store(c0_p1, df, consts_buffer + kMaxLanes);
+  if constexpr (N >= 2) {
+    hn::Store(c1_p0, df, consts_buffer + 2 * kMaxLanes);
+    hn::Store(c1_p1, df, consts_buffer + 3 * kMaxLanes);
+  }
+  if constexpr (N >= 3) {
+    hn::Store(c2_p0, df, consts_buffer + 4 * kMaxLanes);
+    hn::Store(c2_p1, df, consts_buffer + 5 * kMaxLanes);
+  }
+  if constexpr (N >= 4) {
+    hn::Store(c3_p0, df, consts_buffer + 6 * kMaxLanes);
+    hn::Store(c3_p1, df, consts_buffer + 7 * kMaxLanes);
+  }
+  if constexpr (N >= 5) {
+    hn::Store(c4_p0, df, consts_buffer + 8 * kMaxLanes);
+    hn::Store(c4_p1, df, consts_buffer + 9 * kMaxLanes);
+  }
+  if constexpr (N >= 6) {
+    hn::Store(c5_p0, df, consts_buffer + 10 * kMaxLanes);
+    hn::Store(c5_p1, df, consts_buffer + 11 * kMaxLanes);
+  }
+  if constexpr (N >= 7) {
+    hn::Store(c6_p0, df, consts_buffer + 12 * kMaxLanes);
+    hn::Store(c6_p1, df, consts_buffer + 13 * kMaxLanes);
+  }
+  if constexpr (N >= 8) {
+    hn::Store(c7_p0, df, consts_buffer + 14 * kMaxLanes);
+    hn::Store(c7_p1, df, consts_buffer + 15 * kMaxLanes);
+  }
+  HWY_DASSERT(qkv_dim % (NF * 2) == 0);
+  while (i + NF * 2 <= qkv_dim) {
+    VF out0_0, out1_0, out2_0, out3_0, out4_0, out5_0, out6_0, out7_0;
+    VF out0_1, out1_1, out2_1, out3_1, out4_1, out5_1, out6_1, out7_1;
+    LoadAndMulUpTo8Times2<N>(df, out, i, scales, out0_0, out0_1, out1_0, out1_1,
+                             out2_0, out2_1, out3_0, out3_1, out4_0, out4_1,
+                             out5_0, out5_1, out6_0, out6_1, out7_0, out7_1);
+    for (int lane = 0; lane < NF; ++lane) {
+      VF xI1, xI2;
+      Decompress2(df, v_span, qkv_dim * lane + i, xI1, xI2);
+
+      out0_0 = hn::MulAdd(xI1, hn::Set(df, consts_buffer[lane + 0 * kMaxLanes]),
+                          out0_0);
+      out0_1 = hn::MulAdd(xI2, hn::Set(df, consts_buffer[lane + 0 * kMaxLanes]),
+                          out0_1);
+      if constexpr (N >= 2) {
+        out1_0 = hn::MulAdd(
+            xI1, hn::Set(df, consts_buffer[lane + 2 * kMaxLanes]), out1_0);
+        out1_1 = hn::MulAdd(
+            xI2, hn::Set(df, consts_buffer[lane + 2 * kMaxLanes]), out1_1);
+      }
+      if constexpr (N >= 3) {
+        out2_0 = hn::MulAdd(
+            xI1, hn::Set(df, consts_buffer[lane + 4 * kMaxLanes]), out2_0);
+        out2_1 = hn::MulAdd(
+            xI2, hn::Set(df, consts_buffer[lane + 4 * kMaxLanes]), out2_1);
+      }
+      if constexpr (N >= 4) {
+        out3_0 = hn::MulAdd(
+            xI1, hn::Set(df, consts_buffer[lane + 6 * kMaxLanes]), out3_0);
+        out3_1 = hn::MulAdd(
+            xI2, hn::Set(df, consts_buffer[lane + 6 * kMaxLanes]), out3_1);
+      }
+      if constexpr (N >= 5) {
+        out4_0 = hn::MulAdd(
+            xI1, hn::Set(df, consts_buffer[lane + 8 * kMaxLanes]), out4_0);
+        out4_1 = hn::MulAdd(
+            xI2, hn::Set(df, consts_buffer[lane + 8 * kMaxLanes]), out4_1);
+      }
+      if constexpr (N >= 6) {
+        out5_0 = hn::MulAdd(
+            xI1, hn::Set(df, consts_buffer[lane + 10 * kMaxLanes]), out5_0);
+        out5_1 = hn::MulAdd(
+            xI2, hn::Set(df, consts_buffer[lane + 10 * kMaxLanes]), out5_1);
+      }
+      if constexpr (N >= 7) {
+        out6_0 = hn::MulAdd(
+            xI1, hn::Set(df, consts_buffer[lane + 12 * kMaxLanes]), out6_0);
+        out6_1 = hn::MulAdd(
+            xI2, hn::Set(df, consts_buffer[lane + 12 * kMaxLanes]), out6_1);
+      }
+      if constexpr (N >= 8) {
+        out7_0 = hn::MulAdd(
+            xI1, hn::Set(df, consts_buffer[lane + 14 * kMaxLanes]), out7_0);
+        out7_1 = hn::MulAdd(
+            xI2, hn::Set(df, consts_buffer[lane + 14 * kMaxLanes]), out7_1);
+      }
+      VF xI3, xI4;
+      Decompress2(df, v_span, qkv_dim * (NF + lane) + i, xI3, xI4);
+
+      out0_0 = hn::MulAdd(xI3, hn::Set(df, consts_buffer[lane + 1 * kMaxLanes]),
+                          out0_0);
+      out0_1 = hn::MulAdd(xI4, hn::Set(df, consts_buffer[lane + 1 * kMaxLanes]),
+                          out0_1);
+      if constexpr (N >= 2) {
+        out1_0 = hn::MulAdd(
+            xI3, hn::Set(df, consts_buffer[lane + 3 * kMaxLanes]), out1_0);
+        out1_1 = hn::MulAdd(
+            xI4, hn::Set(df, consts_buffer[lane + 3 * kMaxLanes]), out1_1);
+      }
+      if constexpr (N >= 3) {
+        out2_0 = hn::MulAdd(
+            xI3, hn::Set(df, consts_buffer[lane + 5 * kMaxLanes]), out2_0);
+        out2_1 = hn::MulAdd(
+            xI4, hn::Set(df, consts_buffer[lane + 5 * kMaxLanes]), out2_1);
+      }
+      if constexpr (N >= 4) {
+        out3_0 = hn::MulAdd(
+            xI3, hn::Set(df, consts_buffer[lane + 7 * kMaxLanes]), out3_0);
+        out3_1 = hn::MulAdd(
+            xI4, hn::Set(df, consts_buffer[lane + 7 * kMaxLanes]), out3_1);
+      }
+      if constexpr (N >= 5) {
+        out4_0 = hn::MulAdd(
+            xI3, hn::Set(df, consts_buffer[lane + 9 * kMaxLanes]), out4_0);
+        out4_1 = hn::MulAdd(
+            xI4, hn::Set(df, consts_buffer[lane + 9 * kMaxLanes]), out4_1);
+      }
+      if constexpr (N >= 6) {
+        out5_0 = hn::MulAdd(
+            xI3, hn::Set(df, consts_buffer[lane + 11 * kMaxLanes]), out5_0);
+        out5_1 = hn::MulAdd(
+            xI4, hn::Set(df, consts_buffer[lane + 11 * kMaxLanes]), out5_1);
+      }
+      if constexpr (N >= 7) {
+        out6_0 = hn::MulAdd(
+            xI3, hn::Set(df, consts_buffer[lane + 13 * kMaxLanes]), out6_0);
+        out6_1 = hn::MulAdd(
+            xI4, hn::Set(df, consts_buffer[lane + 13 * kMaxLanes]), out6_1);
+      }
+      if constexpr (N >= 8) {
+        out7_0 = hn::MulAdd(
+            xI3, hn::Set(df, consts_buffer[lane + 15 * kMaxLanes]), out7_0);
+        out7_1 = hn::MulAdd(
+            xI4, hn::Set(df, consts_buffer[lane + 15 * kMaxLanes]), out7_1);
+      }
+    }
+    StoreUpTo8Times2<N>(df, out, i, out0_0, out0_1, out1_0, out1_1, out2_0,
+                        out2_1, out3_0, out3_1, out4_0, out4_1, out5_0, out5_1,
+                        out6_0, out6_1, out7_0, out7_1);
+
+    i += 2 * NF;
+  }
+  HWY_DASSERT(qkv_dim == i);
+}
+
+template <int32_t N, class DF, class VF = hn::Vec<DF>, typename VType>
+HWY_INLINE HWY_MAYBE_UNUSED void MulByConstAndAddTileUpTo8_BF16(
+    DF df, const float* HWY_RESTRICT scales, VF c0_p0, VF c0_p1, VF c1_p0,
+    VF c1_p1, VF c2_p0, VF c2_p1, VF c3_p0, VF c3_p1, VF c4_p0, VF c4_p1,
+    VF c5_p0, VF c5_p1, VF c6_p0, VF c6_p1, VF c7_p0, VF c7_p1,
+    VType* HWY_RESTRICT v_tile, MatPtrT<float>& out) {
+  static_assert(N <= 8);
+  namespace hn = hwy::HWY_NAMESPACE;
+  const size_t qkv_dim = out.Cols();
+  HWY_LANES_CONSTEXPR size_t NF = hn::Lanes(df);
+  constexpr size_t kMaxLanes = hn::MaxLanes(df);
+  using DBF = hn::ScalableTag<BF16>;
+  const DBF dbf;
+  using VBF = hn::Vec<DBF>;
+  PackedSpan<const VType> v_span = MakeConstSpan(v_tile, qkv_dim * 2 * NF);
+  HWY_ALIGN BF16 cs[N * kMaxLanes * 2];
+  PackedSpan<BF16> cs_span = MakeSpan(cs, N * kMaxLanes * 2);
+  float* cs_as_float = HWY_RCAST_ALIGNED(float*, cs);
+  Compress2(df, c0_p0, c0_p1, cs_span, 0);
+  if constexpr (N >= 2) {
+    Compress2(df, c1_p0, c1_p1, cs_span, kMaxLanes * 2);
+  }
+  if constexpr (N >= 3) {
+    Compress2(df, c2_p0, c2_p1, cs_span, 2 * kMaxLanes * 2);
+  }
+  if constexpr (N >= 4) {
+    Compress2(df, c3_p0, c3_p1, cs_span, 3 * kMaxLanes * 2);
+  }
+  if constexpr (N >= 5) {
+    Compress2(df, c4_p0, c4_p1, cs_span, 4 * kMaxLanes * 2);
+  }
+  if constexpr (N >= 6) {
+    Compress2(df, c5_p0, c5_p1, cs_span, 5 * kMaxLanes * 2);
+  }
+  if constexpr (N >= 7) {
+    Compress2(df, c6_p0, c6_p1, cs_span, 6 * kMaxLanes * 2);
+  }
+  if constexpr (N >= 8) {
+    Compress2(df, c7_p0, c7_p1, cs_span, 7 * kMaxLanes * 2);
+  }
+  VF zero = hn::Zero(df);
+  size_t i = 0;
+  HWY_DASSERT(qkv_dim % (NF * 2) == 0);
+  while (i + NF * 2 <= qkv_dim) {
+    VF out0_0, out1_0, out2_0, out3_0;
+    VF out0_1, out1_1, out2_1, out3_1;
+    VF out4_0, out5_0, out6_0, out7_0;
+    VF out4_1, out5_1, out6_1, out7_1;
+    VF helper_out0_0 = hn::Zero(df), helper_out0_1 = hn::Zero(df),
+       helper_out1_0 = hn::Zero(df), helper_out1_1 = hn::Zero(df),
+       helper_out2_0 = hn::Zero(df), helper_out2_1 = hn::Zero(df),
+       helper_out3_0 = hn::Zero(df), helper_out3_1 = hn::Zero(df),
+       helper_out4_0 = hn::Zero(df), helper_out4_1 = hn::Zero(df),
+       helper_out5_0 = hn::Zero(df), helper_out5_1 = hn::Zero(df),
+       helper_out6_0 = hn::Zero(df), helper_out6_1 = hn::Zero(df),
+       helper_out7_0 = hn::Zero(df), helper_out7_1 = hn::Zero(df);
+    LoadAndMulUpTo8Times2<N>(df, out, i, scales, out0_0, out0_1, out1_0, out1_1,
+                             out2_0, out2_1, out3_0, out3_1, out4_0, out4_1,
+                             out5_0, out5_1, out6_0, out6_1, out7_0, out7_1);
+      for (int lane = 0; lane < NF; ++lane) {
+        VBF xI, xI2;
+        Decompress2(dbf, v_span, 2 * qkv_dim * lane + i * 2, xI, xI2);
+
+        // Set pair of c scales for 2 value vectors
+        out0_0 = hn::ReorderWidenMulAccumulate(
+            df, xI, hn::BitCast(dbf, hn::Set(df, cs_as_float[lane])), out0_0,
+            helper_out0_0);
+        out0_1 = hn::ReorderWidenMulAccumulate(
+            df, xI2, hn::BitCast(dbf, hn::Set(df, cs_as_float[lane])), out0_1,
+            helper_out0_1);
+        if constexpr (N >= 2) {
+          out1_0 = hn::ReorderWidenMulAccumulate(
+              df, xI,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + kMaxLanes])),
+              out1_0, helper_out1_0);
+          out1_1 = hn::ReorderWidenMulAccumulate(
+              df, xI2,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + kMaxLanes])),
+              out1_1, helper_out1_1);
+        }
+        if constexpr (N >= 3) {
+          out2_0 = hn::ReorderWidenMulAccumulate(
+              df, xI,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + 2 * kMaxLanes])),
+              out2_0, helper_out2_0);
+          out2_1 = hn::ReorderWidenMulAccumulate(
+              df, xI2,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + 2 * kMaxLanes])),
+              out2_1, helper_out2_1);
+        }
+        if constexpr (N >= 4) {
+          out3_0 = hn::ReorderWidenMulAccumulate(
+              df, xI,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + 3 * kMaxLanes])),
+              out3_0, helper_out3_0);
+          out3_1 = hn::ReorderWidenMulAccumulate(
+              df, xI2,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + 3 * kMaxLanes])),
+              out3_1, helper_out3_1);
+        }
+        if constexpr (N >= 5) {
+          out4_0 = hn::ReorderWidenMulAccumulate(
+              df, xI,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + 4 * kMaxLanes])),
+              out4_0, helper_out4_0);
+          out4_1 = hn::ReorderWidenMulAccumulate(
+              df, xI2,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + 4 * kMaxLanes])),
+              out4_1, helper_out4_1);
+        }
+        if constexpr (N >= 6) {
+          out5_0 = hn::ReorderWidenMulAccumulate(
+              df, xI,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + 5 * kMaxLanes])),
+              out5_0, helper_out5_0);
+          out5_1 = hn::ReorderWidenMulAccumulate(
+              df, xI2,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + 5 * kMaxLanes])),
+              out5_1, helper_out5_1);
+        }
+        if constexpr (N >= 7) {
+          out6_0 = hn::ReorderWidenMulAccumulate(
+              df, xI,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + 6 * kMaxLanes])),
+              out6_0, helper_out6_0);
+          out6_1 = hn::ReorderWidenMulAccumulate(
+              df, xI2,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + 6 * kMaxLanes])),
+              out6_1, helper_out6_1);
+        }
+        if constexpr (N >= 8) {
+          out7_0 = hn::ReorderWidenMulAccumulate(
+              df, xI,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + 7 * kMaxLanes])),
+              out7_0, helper_out7_0);
+          out7_1 = hn::ReorderWidenMulAccumulate(
+              df, xI2,
+              hn::BitCast(dbf, hn::Set(df, cs_as_float[lane + 7 * kMaxLanes])),
+              out7_1, helper_out7_1);
+        }
+      }
+#if HWY_NATIVE_DOT_BF16 == 0
+    out0_0 = hn::Add(out0_0, helper_out0_0);
+    out0_1 = hn::Add(out0_1, helper_out0_1);
+    if constexpr (N >= 2) {
+      out1_0 = hn::Add(out1_0, helper_out1_0);
+      out1_1 = hn::Add(out1_1, helper_out1_1);
+    }
+    if constexpr (N >= 3) {
+      out2_0 = hn::Add(out2_0, helper_out2_0);
+      out2_1 = hn::Add(out2_1, helper_out2_1);
+    }
+    if constexpr (N >= 4) {
+      out3_0 = hn::Add(out3_0, helper_out3_0);
+      out3_1 = hn::Add(out3_1, helper_out3_1);
+    }
+    if constexpr (N >= 5) {
+      out4_0 = hn::Add(out4_0, helper_out4_0);
+      out4_1 = hn::Add(out4_1, helper_out4_1);
+    }
+    if constexpr (N >= 6) {
+      out5_0 = hn::Add(out5_0, helper_out5_0);
+      out5_1 = hn::Add(out5_1, helper_out5_1);
+    }
+    if constexpr (N >= 7) {
+      out6_0 = hn::Add(out6_0, helper_out6_0);
+      out6_1 = hn::Add(out6_1, helper_out6_1);
+    }
+    if constexpr (N >= 8) {
+      out7_0 = hn::Add(out7_0, helper_out7_0);
+      out7_1 = hn::Add(out7_1, helper_out7_1);
+    }
+#endif
+    StoreUpTo8Times2<N>(df, out, i, out0_0, out0_1, out1_0, out1_1, out2_0,
+                        out2_1, out3_0, out3_1, out4_0, out4_1, out5_0, out5_1,
+                        out6_0, out6_1, out7_0, out7_1);
+
+    i += 2 * NF;
+  }
+  HWY_DASSERT(qkv_dim == i);
+}
 
 // Prescales NF rows of out by scale, then multiplies 1 row of V by the
 // corresponding values in c0 and adds them to the NF rows of out.
