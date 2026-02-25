@@ -25,7 +25,6 @@
 #include <cstdint>
 #include <random>
 #include <type_traits>  // std::enable_if_t
-#include <utility>
 #include <vector>
 
 #include "ops/matmul.h"
@@ -1869,6 +1868,7 @@ HWY_NOINLINE HWY_MAYBE_UNUSED TokenAndProb FusedSoftmaxAndSampleTopK(
 // Performs 4x4 average pooling across row vectors
 // Input has 4096 (64*64) rows, output has 256 (16*16) rows
 // Each output row is the average of a 4x4 block of input rows
+// This is surprisingly inexpensive for small images (<1 ms).
 template <typename T>
 MatStorageT<T> AvgPool4x4(MatStorageT<T>& input, const Allocator& allocator) {
   const Extents2D extents = input.Extents();

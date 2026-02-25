@@ -726,6 +726,7 @@ void GenerateImageTokensT(const ModelConfig& config,
                           const RuntimeConfig& runtime_config, size_t seq_len,
                           const WeightsPtrs& weights, const Image& image,
                           ImageTokens& image_tokens, MatMulEnv& env) {
+  GCPP_ZONE(env.ctx, hwy::Profiler::GlobalIdx(), Zones::kGenImageTokens);
   if (config.vit_config.layer_configs.empty()) {
     HWY_ABORT("Model does not support generating image tokens.");
   }

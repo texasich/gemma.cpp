@@ -100,6 +100,7 @@ bool Image::ReadPPM(const std::string& filename) {
   return ReadPPM(hwy::Span<const char>(content.data(), content.size()));
 }
 
+// This is surprisingly inexpensive for small images (3 ms).
 bool Image::ReadPPM(const hwy::Span<const char>& buf) {
   const char* pos = CheckP6Format(buf.cbegin(), buf.cend());
   if (!pos) {
@@ -171,6 +172,7 @@ void Image::Set(int width, int height, const float* data) {
   }
 }
 
+// This is surprisingly inexpensive for small images (2 ms).
 void Image::Resize(int new_width, int new_height) {
   std::vector<float> new_data(new_width * new_height * 3);
   // TODO: go to bilinear interpolation, or antialias.

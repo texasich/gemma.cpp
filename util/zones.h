@@ -29,6 +29,7 @@ enum class Zones {   // Keep sorted
   kGenEmbed,
   kGenEmbeddingMatmul,
   kGenFFW,
+  kGenImageTokens,
   kGenSampleTop1,
   kGenSampleTopK,
   kGenStats,

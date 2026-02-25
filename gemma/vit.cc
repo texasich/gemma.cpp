@@ -76,7 +76,7 @@ class VitAttention {
     const size_t seq_len =
         static_cast<size_t>(activations_.attention.div_seq_len.GetDivisor());
     const float query_scale = 1.0f / sqrtf(static_cast<float>(qkv_dim));
-    PROFILER_ZONE("Gen.VitAttention.DotSoftmax");
+    PROFILER_ZONE("Gen.VitAttention.DotSoftmaxMatrix");
 
     MatPtrT<float>& Q = activations_.attention.vit_Q;
     MatPtrT<float>& K = activations_.attention.vit_K;

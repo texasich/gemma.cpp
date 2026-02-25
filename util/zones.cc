@@ -47,6 +47,8 @@ const char* ZoneName(Zones zone) {
       return "Gen.EmbeddingMatmul";
     case Zones::kGenFFW:
       return "Gen.FFW";
+    case Zones::kGenImageTokens:
+      return "Gen.ImageTokens";
     case Zones::kGenSampleTop1:
       return "Gen.SampleTop1";
     case Zones::kGenSampleTopK:
@@ -111,6 +113,7 @@ hwy::ProfilerFlags ZoneFlags(Zones zone) {
     case Zones::kGenEmbed:
     case Zones::kGenEmbeddingMatmul:
     case Zones::kGenFFW:
+    case Zones::kGenImageTokens:
       return hwy::ProfilerFlags::kInclusive;
     default:
       return hwy::ProfilerFlags::kDefault;
