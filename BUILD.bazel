@@ -387,6 +387,7 @@ cc_library(
         "ops/sum-inl.h",
         "ops/fp_arith-inl.h",
         "ops/ops-inl.h",
+        "ops/fast_ops-inl.h",
     ],
     deps = [
         ":allocator",

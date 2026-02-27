@@ -48,6 +48,7 @@
 // After highway.h
 #include "compression/test_util-inl.h"
 #include "ops/ops-inl.h"
+#include "ops/fast_ops-inl.h"
 #include "hwy/tests/test_util-inl.h"
 
 HWY_BEFORE_NAMESPACE();
@@ -466,6 +467,32 @@ static HWY_NOINLINE void TestAllGelu() {
   ForeachActivationType1<TestGelu>(hn::ScalableTag<float>());
 }
 
+struct TestFastGelu {
+  template <typename T, class D>
+  void operator()(T, D) const {
+    std::vector<T> values;
+    for (int i = -150; i <= 150; ++i) {
+      values.push_back(hwy::ConvertScalarTo<T>(.1f * i));
+    }
+    std::vector<T> result = values;
+    gcpp::HWY_NAMESPACE::FastGelu(result.data(), result.size());
+
+    for (size_t i = 0; i < values.size(); i++) {
+      const float max_error = IsBF16<T>() ? 0.02f : 0.002f;
+      const float x = hwy::ConvertScalarTo<float>(values[i]);
+      const float actual = hwy::ConvertScalarTo<float>(result[i]);
+      const float expected =
+          x * (0.5f + 0.5f * tanh(x * (0.79788f + 0.035677f * x * x)));
+      EXPECT_NEAR(expected, actual, max_error)
+          << (IsBF16<T>() ? "bf16" : "float");
+    }
+  }
+};
+
+static HWY_NOINLINE void TestAllFastGelu() {
+  ForeachActivationType1<TestFastGelu>(hn::ScalableTag<float>());
+}
+
 static HWY_NOINLINE HWY_MAYBE_UNUSED void ScalarRopeAndMulBy(
     const float mul, float* HWY_RESTRICT x, const size_t dim_qkv,
     const float* HWY_RESTRICT inv_timescale, const int pos) {
@@ -818,6 +845,7 @@ HWY_EXPORT_AND_TEST_P(OpsTest, TestAllSoftmaxState);
 HWY_EXPORT_AND_TEST_P(OpsTest, TestAllCreateDistribution);
 HWY_EXPORT_AND_TEST_P(OpsTest, TestAllSigmoid);
 HWY_EXPORT_AND_TEST_P(OpsTest, TestAllGelu);
+HWY_EXPORT_AND_TEST_P(OpsTest, TestAllFastGelu);
 HWY_EXPORT_AND_TEST_P(OpsTest, TestRopeAndMulBy);
 HWY_EXPORT_AND_TEST_P(OpsTest, TestAllRMSNorm);
 HWY_EXPORT_AND_TEST_P(OpsTest, TestAllRMSNormInplace);
