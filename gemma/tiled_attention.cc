@@ -628,7 +628,7 @@ void LocalAttentionForAllHeadsTokensAndBatch(
 }
 
 void TiledAttention(AttentionImpl attention_impl, size_t num_tokens,
-                    const size_t layer_idx, const LayerWeightsPtrs& layer,
+                    size_t layer_idx, const LayerWeightsPtrs& layer,
                     AttentionActivationsPtrs& activations, QBatch& qbatch,
                     MatMulEnv& env, int flags) {
   static const auto zone = env.ctx.profiler.AddZone(
