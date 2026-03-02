@@ -29,6 +29,11 @@
 
 namespace gcpp {
 
+// TODO: rays - Remove this once hwy is updated.
+#ifndef HWY_ARCH_MAX_BYTES
+#define HWY_ARCH_MAX_BYTES 256
+#endif
+
 // Number of rows for KV cache. Note that both rows and cols are u32, and
 // the total number of elements can exceed 2^32.
 static size_t CappedSeqLen(const ModelConfig& config,
@@ -43,6 +48,23 @@ static size_t CappedSeqLen(const ModelConfig& config,
 
 KVCache::KVCache(const Extents2D& kv_extents, const Allocator& allocator)
     : kv_cache("kv", kv_extents, allocator, MatPadding::kOdd),
+      // WARNING: the rows and cols of k_cache and v_cache will be modified
+      // before use!
+      // The rows will be reduced by a factor of 2xkFloatsPerVector, and the
+      // cols will be increased by 2xkFloatsPerVector on first use. This is to
+      // avoid making KVCache another class that has to be duplicated for each
+      // machine architecture, since kFloatsPerVector is architecture dependent.
+      // The change is shape is safe only if the padding is kPacked.
+      k_cache("k",
+              Extents2D(HWY_MAX(kv_extents.rows,
+                                2 * HWY_ARCH_MAX_BYTES / sizeof(float)),
+                        kv_extents.cols / 2),
+              allocator, MatPadding::kPacked),
+      v_cache("v",
+              Extents2D(HWY_MAX(kv_extents.rows,
+                                2 * HWY_ARCH_MAX_BYTES / sizeof(float)),
+                        kv_extents.cols / 2),
+              allocator, MatPadding::kPacked),
       allocator_(allocator) {}
 
 KVCache::KVCache(const ModelConfig& config, const InferenceArgs& inference_args,
@@ -57,14 +79,16 @@ KVCache::KVCache(const ModelConfig& config, const InferenceArgs& inference_args,
     : allocator_(allocator) {
   if (runtime_config.attention_impl == AttentionImpl::kFlashTransposedQs ||
       runtime_config.attention_impl == AttentionImpl::kFlashTransposedQsBF16
-  ) {
+      || ((runtime_config.attention_impl == AttentionImpl::kFlashTransposedQs
+           ) &&
+          hwy::IsSame<KV_t, BF16>())) {
     const size_t num_tiles =
         hwy::DivCeil(CappedSeqLen(config, inference_args), kTileSize);
     tiled_seq_len = num_tiles * kTileSize;
     int tile_length = 2 * config.layer_configs[0].qkv_dim * kTileSize;
     Type kv_cache_type;
     if (runtime_config.attention_impl == AttentionImpl::kFlashTransposedQsBF16
-        ) {
+        || hwy::IsSame<KV_t, BF16>()) {
       kv_cache_type = runtime_config.kv_cache_type.value_or(Type::kBF16);
     } else {
       kv_cache_type = runtime_config.kv_cache_type.value_or(Type::kF32);
@@ -114,9 +138,6 @@ KVCache KVCache::Copy() {
   KVCache copy(kv_cache.Extents(), allocator_);
 
   CopyMat(kv_cache, copy.kv_cache);
-
-  CopyMat(compact_kv_cache_ptr, copy.compact_kv_cache_ptr);
-  copy.tiled_seq_len = tiled_seq_len;
   return copy;
 }
 

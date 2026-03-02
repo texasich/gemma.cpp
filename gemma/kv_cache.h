@@ -30,7 +30,7 @@
 
 namespace gcpp {
 
-using KV_t = float;
+using KV_t = BF16;
 struct KVCache;
 
 // A non-owning view of a KVCache.
@@ -40,6 +40,8 @@ struct KVCachePtr {
 
   bool IsTiled() const;
   MatPtrT<KV_t> kv_cache;
+  MatPtrT<KV_t> k_cache;
+  MatPtrT<KV_t> v_cache;
   KVCache* cache = nullptr;
 };
 
@@ -123,11 +125,33 @@ struct KVCache {
   // kv_head_ptrs[...].Rows().
   std::vector<MatPtr> kv_head_ptrs;
   MatStorageT<KV_t> kv_cache;  // [seq_len, layers * kv_heads * qkv_dim * 2]
+  // The format of k_cache indicates that there are pairs of values from
+  // qkv_dim in groups of 2x kFloatsPerVector(=NF) elements from the sequence,
+  // in groups of qkv_dim/2 elements in groups of kv_heads elements.
+  // This enables sequential loading of the data when filling 2 vectors with
+  // NF sequence elements of pairs of BF16 qkv values. The next vector then
+  // continues reading the rest of qkv.
+  // [seq_len / 2NF, layers * kv_heads * qkv_dim/2 * 2NF * 2]
+  MatStorageT<KV_t> k_cache;
+  // v_cache is formatted to allow sequential access to V during scaling and
+  // update of att_out.
+  // Originally [seq_len, layers * kv_heads * qkv_dim]
+  // v_cache is transposed to:
+  // [layers, kv_heads, seq_len, qkv_dim], reshaped to:
+  // [layers, kv_heads, seq_len/(2NF), 2NF, qkv_dim/(2NF), 2NF]
+  // then transposed to:
+  // [seq_len/(2NF), layers, kv_heads, qkv_dim/(2NF), 2NF, 2NF]
+  // and finally packed in a 2D MatStorageT as:
+  // [seq_len/(2NF), layers * kv_heads * qkv_dim/(2NF) * 2NF * 2NF]
+  // This allows sequential reads of 2NF registers each of 2NF BF16 values,
+  // repeatedly until all of qkv_dim is read.
+  MatStorageT<KV_t> v_cache;
 
   KVCachePtr ToPtr() {
     return KVCachePtr{
         .kv_cache = kv_cache,
-        .cache = this,
+        .k_cache = k_cache,
+        .v_cache = v_cache,
     };
   }
 
