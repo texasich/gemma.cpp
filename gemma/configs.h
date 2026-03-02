@@ -214,6 +214,7 @@ enum class Model {
   GEMMA3_12B,
   GEMMA3_27B,
   GEMMA3_270M,
+  CUSTOM,
   kSentinel,
 };
 
@@ -236,13 +237,13 @@ static inline bool IsObsolete(Model model) {
   return false;
 }
 
-// Visits every valid model enum, skipping `UNKNOWN` and `kSentinel`.
+// Visits every valid model enum, skipping `UNKNOWN`, `kSentinel` and `CUSTOM`.
 template <class Func>
 void ForEachModel(const Func& func) {
   for (size_t i = static_cast<size_t>(Model::GEMMA2_9B);
        i < static_cast<size_t>(Model::kSentinel); ++i) {
     const Model model = static_cast<Model>(i);
-    if (!IsObsolete(model)) func(model);
+    if (!IsObsolete(model) && model != Model::CUSTOM) func(model);
   }
 }
 

@@ -23,6 +23,7 @@
 #include <charconv>
 #include <cstdlib>
 #include <cstring>  // strcmp
+#include <optional>
 #include <string>
 #include <system_error>  // std::errc  // NOLINT
 
@@ -258,23 +259,25 @@ static ModelConfig ReadOrDeduceConfig(BlobReader& reader,
     type_prefix.PrintTypeBytes();
   }
 
-  // Always deduce so we can verify it against the config we read.
-  const size_t layers = DeduceNumLayers(reader.Keys());
-  const int layer_types = DeduceLayerTypes(reader);
-  const Model deduced_model =
-      DeduceModel(reader.blob_path(), layers, layer_types);
-
   ModelConfig config;
   // Check first to prevent `CallWithSpan` from printing a warning.
-  if (reader.Find(kConfigName)) {
+  const bool has_config = reader.Find(kConfigName);
+  if (has_config) {
     HWY_ASSERT(reader.CallWithSpan<uint32_t>(
         kConfigName, [&config](const SerializedSpan serialized) {
           const IFields::ReadResult result = config.Read(serialized, 0);
           WarnIfExtra(result, kConfigName);
           HWY_ASSERT_M(result.pos != 0, "Error deserializing config");
         }));
-
-    HWY_ASSERT(config.model != Model::UNKNOWN);
+  }
+  // Optionally deduce so we can verify it against the config we read.
+  std::optional<Model> deduced_model;
+  if (!has_config || config.model != Model::CUSTOM) {
+    const size_t layers = DeduceNumLayers(reader.Keys());
+    const int layer_types = DeduceLayerTypes(reader);
+    deduced_model = DeduceModel(reader.blob_path(), layers, layer_types);
+  }
+  if (has_config) {
     HWY_ASSERT(config.wrapping != PromptWrapping::kSentinel);
     HWY_ASSERT(config.weight != Type::kUnknown);
     for (const LayerConfig& layer_config : config.layer_configs) {
@@ -285,18 +288,19 @@ static ModelConfig ReadOrDeduceConfig(BlobReader& reader,
 
     // We trust the deserialized config, but checking helps to validate the
     // deduction, which we rely on below for pre-2025 files.
-    if (config.model != deduced_model) {
+    if (deduced_model.has_value() && config.model != *deduced_model) {
       const std::string suffix = WrappingSuffix(config.wrapping);
       HWY_WARN("Detected model %s does not match config %s.",
-               (std::string(ModelPrefix(deduced_model)) + suffix).c_str(),
+               (std::string(ModelPrefix(*deduced_model)) + suffix).c_str(),
                (std::string(ModelPrefix(config.model)) + suffix).c_str());
     }
     return config;
   }
 
   // Pre-2025 format: no config, rely on deduction plus `wrapping_override`.
-  return ModelConfig(deduced_model, deduced_weight,
-                     ChooseWrapping(deduced_model, wrapping_override));
+  HWY_ASSERT(deduced_model.has_value());
+  return ModelConfig(*deduced_model, deduced_weight,
+                     ChooseWrapping(*deduced_model, wrapping_override));
 }
 
 static std::vector<float> ReadScales(BlobReader& reader,

@@ -84,6 +84,7 @@ PYBIND11_MODULE(configs, py_module) {
 
   enum_<Model>(py_module, "Model")
       .value("UNKNOWN", Model::UNKNOWN)
+      .value("CUSTOM", Model::CUSTOM)
       .value("GEMMA2_9B", Model::GEMMA2_9B)
       .value("GEMMA2_27B", Model::GEMMA2_27B)
       .value("GEMMA2_2B", Model::GEMMA2_2B)
