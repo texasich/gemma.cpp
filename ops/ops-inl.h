@@ -1328,7 +1328,6 @@ HWY_INLINE HWY_MAYBE_UNUSED void MulByConstAndAddTileUpTo8_BF16(
   if constexpr (N >= 8) {
     Compress2(df, c7_p0, c7_p1, cs_span, 7 * kMaxLanes * 2);
   }
-  VF zero = hn::Zero(df);
   size_t i = 0;
   HWY_DASSERT(qkv_dim % (NF * 2) == 0);
   while (i + NF * 2 <= qkv_dim) {
