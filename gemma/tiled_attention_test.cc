@@ -98,7 +98,7 @@ struct AttentionTestEnv {
           }
         }
       } else if (kv_caches.back().compact_kv_cache_ptr.HasPtr()) {
-        MatPtrT<KV_t> compact_kv_cache = kv_caches.back().compact_kv_cache_ptr;
+        MatPtrT<float> compact_kv_cache = kv_caches.back().compact_kv_cache_ptr;
         FillMatPtrT(compact_kv_cache);
       } else {
         FillMatPtrT(kv_caches.back().kv_cache);
@@ -735,13 +735,12 @@ HWY_AFTER_NAMESPACE();
 namespace gcpp {
 HWY_BEFORE_TEST(TiledAttentionTest);
 HWY_EXPORT_AND_TEST_P(TiledAttentionTest, TestTransposeStridedQueries);
-// TODO() Fix the goldens for the change in KV_t to BF16
-// HWY_EXPORT_AND_TEST_P(TiledAttentionTest,
-//                       TestLocalAttentionForAllHeadsTokensAndBatch);
+HWY_EXPORT_AND_TEST_P(TiledAttentionTest,
+                      TestLocalAttentionForAllHeadsTokensAndBatch);
 HWY_EXPORT_AND_TEST_P(TiledAttentionTest, TestAttentionMultipleTokens);
 HWY_EXPORT_AND_TEST_P(TiledAttentionTest, TestAttentionMultipleTokensBF16);
-// HWY_EXPORT_AND_TEST_P(TiledAttentionTest,
-//                       TestAttentionMultipleTokensAttentionWindowSizeEdgeCase);
+HWY_EXPORT_AND_TEST_P(TiledAttentionTest,
+                      TestAttentionMultipleTokensAttentionWindowSizeEdgeCase);
 
 HWY_AFTER_TEST();
 

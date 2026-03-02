@@ -81,8 +81,8 @@ static inline bool EnumValid(LayerAttentionType type) {
 }
 
 enum class AttentionImpl {
-  kOld,    // Previous Attention implementation
-  kFlash,  // Flash Attention (default)
+  kOld,
+  kFlash,
   kFlashTransposedQs,
   kFlashTransposedQsBF16,
   kSentinel,
