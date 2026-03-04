@@ -441,6 +441,31 @@ static HWY_NOINLINE void TestAllSigmoid() {
   ForeachActivationType1<TestSigmoid>(hn::ScalableTag<float>());
 }
 
+struct TestFastSigmoid {
+  template <typename T, class D>
+  void operator()(T, D) const {
+    std::vector<T> values;
+    for (int i = -150; i <= 150; ++i) {
+      values.push_back(hwy::ConvertScalarTo<T>(.1f * i));
+    }
+    std::vector<T> result = values;
+    gcpp::HWY_NAMESPACE::FastSigmoid(result.data(), result.size());
+
+    for (size_t i = 0; i < values.size(); i++) {
+      const float max_error = IsBF16<T>() ? 0.003f : 0.0004f;
+      const float value = hwy::ConvertScalarTo<float>(values[i]);
+      const float actual = hwy::ConvertScalarTo<float>(result[i]);
+      const float expected = (1 / (1 + std::exp(-value)));
+      EXPECT_NEAR(expected, actual, max_error)
+          << (IsBF16<T>() ? "bf16" : "float");
+    }
+  }
+};
+
+static HWY_NOINLINE void TestAllFastSigmoid() {
+  ForeachActivationType1<TestFastSigmoid>(hn::ScalableTag<float>());
+}
+
 struct TestGelu {
   template <typename T, class D>
   void operator()(T, D) const {
@@ -844,6 +869,7 @@ HWY_EXPORT_AND_TEST_P(OpsTest, TestAllSoftmax);
 HWY_EXPORT_AND_TEST_P(OpsTest, TestAllSoftmaxState);
 HWY_EXPORT_AND_TEST_P(OpsTest, TestAllCreateDistribution);
 HWY_EXPORT_AND_TEST_P(OpsTest, TestAllSigmoid);
+HWY_EXPORT_AND_TEST_P(OpsTest, TestAllFastSigmoid);
 HWY_EXPORT_AND_TEST_P(OpsTest, TestAllGelu);
 HWY_EXPORT_AND_TEST_P(OpsTest, TestAllFastGelu);
 HWY_EXPORT_AND_TEST_P(OpsTest, TestRopeAndMulBy);
