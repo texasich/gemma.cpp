@@ -98,7 +98,7 @@ HWY_INLINE hn::Vec<D> FastSigmoid(D d, hn::Vec<D> val) {
     // Clamp index to 7
     idx_i = hn::Min(idx_i, hn::Set(DI(), 7));
 
-    HWY_ALIGN static constexpr T arr_a[] = {
+    HWY_ALIGN static constexpr T arr_a[8] = {
         static_cast<T>(-1435.326650329326),
         static_cast<T>(-96.9456723845743),
         static_cast<T>(-18.628915468855695),
@@ -107,7 +107,7 @@ HWY_INLINE hn::Vec<D> FastSigmoid(D d, hn::Vec<D> val) {
         static_cast<T>(-1.0464246812594584),
         static_cast<T>(-0.4801959711368016),
         static_cast<T>(-0.2132727031175401)};
-    HWY_ALIGN static constexpr T arr_c[] = {static_cast<T>(-316.5640994591445),
+    HWY_ALIGN static constexpr T arr_c[8] = {static_cast<T>(-316.5640994591445),
                                             static_cast<T>(-49.14374182730444),
                                             static_cast<T>(-15.69264419046708),
                                             static_cast<T>(-6.949871926785674),
@@ -115,7 +115,7 @@ HWY_INLINE hn::Vec<D> FastSigmoid(D d, hn::Vec<D> val) {
                                             static_cast<T>(-1.839177585570145),
                                             static_cast<T>(-0.9298342163526662),
                                             static_cast<T>(-0.426230503963466)};
-    HWY_ALIGN static constexpr T arr_d[] = {
+    HWY_ALIGN static constexpr T arr_d[8] = {
         static_cast<T>(-5676.517069241468), static_cast<T>(-363.0662559912978),
         static_cast<T>(-60.61589604370584), static_cast<T>(-14.306713103378062),
         static_cast<T>(-2.725237489187118), static_cast<T>(0.7890752292798894),
@@ -123,9 +123,11 @@ HWY_INLINE hn::Vec<D> FastSigmoid(D d, hn::Vec<D> val) {
 
     if constexpr (kLanes >= 8 && !HWY_HAVE_SCALABLE) {
       auto idx = hn::IndicesFromVec(d, idx_i);
-      a = hn::TableLookupLanes(hn::Load(d, arr_a), idx);
-      c = hn::TableLookupLanes(hn::Load(d, arr_c), idx);
-      d_coef = hn::TableLookupLanes(hn::Load(d, arr_d), idx);
+      hn::CappedTag<T, 8> d8;
+      a = hn::TableLookupLanes(hn::ResizeBitCast(d, hn::Load(d8, arr_a)), idx);
+      c = hn::TableLookupLanes(hn::ResizeBitCast(d, hn::Load(d8, arr_c)), idx);
+      d_coef =
+          hn::TableLookupLanes(hn::ResizeBitCast(d, hn::Load(d8, arr_d)), idx);
     } else {
       auto idx = hn::IndicesFromVec(d, idx_i);
       hn::FixedTag<T, 4> d4;
