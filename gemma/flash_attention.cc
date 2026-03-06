@@ -944,8 +944,8 @@ static HWY_INLINE void QDotKTilexUpTo8TransposedKDoubleWidth(
   for (size_t i = 0; i < qkv_dim; ++i) {
     VQ_T k_vec1, k_vec2;
     if constexpr (HWY_TARGET == HWY_AVX2) {
-      hwy::Prefetch(k_transposed_span.ptr + (i + 3) * gcpp::KVCache::kTileSize);
-      hwy::Prefetch(k_transposed_span.ptr + (i + 4) * gcpp::KVCache::kTileSize);
+      hwy::Prefetch(k_transposed_span.ptr +
+                    (i + 20) * gcpp::KVCache::kTileSize);
     }
     Decompress2(df, k_transposed_span, i * gcpp::KVCache::kTileSize, k_vec1,
                 k_vec2);
