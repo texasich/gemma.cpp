@@ -544,8 +544,6 @@ void TestAttentionMultipleTokens() {
   test_env.SetupWeights();
   FillMatPtrT(test_env.activations->attention.pre_att_rms_out);
   FillMatPtrT(test_env.activations->attention.q);
-  FillMatPtrT(test_env.activations->attention.vit_Q);
-  FillMatPtrT(test_env.activations->attention.vit_K);
   FillMatPtrT(test_env.activations->attention.att);
   FillMatPtrT(test_env.activations->attention.att_out);
   FillMatPtrT(test_env.activations->attention.softmax_max);
@@ -590,8 +588,6 @@ void TestAttentionMultipleTokensAttentionWindowSizeEdgeCase() {
   test_env.SetupWeights();
   FillMatPtrT(test_env.activations->attention.pre_att_rms_out);
   FillMatPtrT(test_env.activations->attention.q);
-  FillMatPtrT(test_env.activations->attention.vit_Q);
-  FillMatPtrT(test_env.activations->attention.vit_K);
   FillMatPtrT(test_env.activations->attention.att);
   FillMatPtrT(test_env.activations->attention.att_out);
   FillMatPtrT(test_env.activations->attention.softmax_max);
@@ -763,8 +759,6 @@ void TestAttentionMultipleTokensBF16() {
   test_env.SetupWeights();
   FillMatPtrT(test_env.activations->attention.pre_att_rms_out);
   FillMatPtrT(test_env.activations->attention.q);
-  FillMatPtrT(test_env.activations->attention.vit_Q);
-  FillMatPtrT(test_env.activations->attention.vit_K);
   FillMatPtrT(test_env.activations->attention.att);
   FillMatPtrT(test_env.activations->attention.att_out);
   FillMatPtrT(test_env.activations->attention.softmax_max);
@@ -807,8 +801,6 @@ void TestAttentionMultipleTokensInt8() {
   test_env.SetupWeights();
   FillMatPtrT(test_env.activations->attention.pre_att_rms_out);
   FillMatPtrT(test_env.activations->attention.q);
-  FillMatPtrT(test_env.activations->attention.vit_Q);
-  FillMatPtrT(test_env.activations->attention.vit_K);
   FillMatPtrT(test_env.activations->attention.att);
   FillMatPtrT(test_env.activations->attention.att_out);
   FillMatPtrT(test_env.activations->attention.softmax_max);

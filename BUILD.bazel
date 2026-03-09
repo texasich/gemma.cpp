@@ -555,6 +555,7 @@ cc_library(
         ":ops",
         ":tensor_stats",
         ":threading_context",
+        "@highway//:abort_header_only",
     ],
 )
 
@@ -678,6 +679,7 @@ cc_library(
         ":attention",
         ":basics",
         ":configs",
+        ":flash_structs",
         ":gemma_args",
         ":kv_cache",
         ":mat",

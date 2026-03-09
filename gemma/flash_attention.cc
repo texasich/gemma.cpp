@@ -2260,3 +2260,21 @@ void FlashAttention(const size_t num_tokens, const size_t target_parallelism,
 }  // namespace HWY_NAMESPACE
 }  // namespace gcpp
 HWY_AFTER_NAMESPACE();
+
+#if HWY_ONCE
+namespace gcpp {
+HWY_EXPORT(DispatchTileFlashAttention148);
+
+void DispatchDispatchTileFlashAttention148(
+    Tile148Params& params, const MatPtrT<BF16>& q, const MatPtrT<KV_t>& k,
+    const MatPtrT<KV_t>& v, const size_t layer_idx,
+    const AttentionActivationsPtrs& activations, MatPtrT<float>& att_out,
+    size_t qkv_dim, ThreadingContext& ctx, const size_t worker,
+    AttentionImpl attention_impl) {
+  HWY_DYNAMIC_DISPATCH(DispatchTileFlashAttention148)(
+      params, q, k, v, layer_idx, activations, att_out, qkv_dim, ctx, worker,
+      attention_impl);
+}
+
+}  // namespace gcpp
+#endif

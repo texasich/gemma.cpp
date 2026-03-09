@@ -42,14 +42,6 @@ namespace gcpp {
       const MatPtr& query_norm_scale, size_t layer_idx,                      \
       const AttentionActivationsPtrs& activations, ThreadingContext& ctx);   \
                                                                              \
-  void SingleFlashAttention(size_t start_pos, size_t last_pos,               \
-                            const BF16* HWY_RESTRICT q,                      \
-                            const MatPtrT<KV_t>& k, const MatPtrT<KV_t>& v,  \
-                            size_t layer_idx,                                \
-                            const AttentionActivationsPtrs& activations,     \
-                            float* HWY_RESTRICT att_out,                     \
-                            ThreadingContext& ctx, size_t worker);           \
-                                                                             \
   size_t GetVTileSize(size_t kNF, size_t num_head_groups, size_t num_tokens, \
                       size_t total_tasks, size_t target_parallelism);        \
                                                                              \
@@ -82,6 +74,13 @@ namespace gcpp {
 HWY_VISIT_TARGETS(GEMMA_DECL_FLASH_ATTENTION)
 
 #undef GEMMA_DECL_FLASH_ATTENTION
+
+void DispatchDispatchTileFlashAttention148(
+    Tile148Params& params, const MatPtrT<BF16>& q, const MatPtrT<KV_t>& k,
+    const MatPtrT<KV_t>& v, const size_t layer_idx,
+    const AttentionActivationsPtrs& activations, MatPtrT<float>& att_out,
+    size_t qkv_dim, ThreadingContext& ctx, const size_t worker,
+    AttentionImpl attention_impl);
 
 }  // namespace gcpp
 

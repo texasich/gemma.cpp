@@ -15,6 +15,8 @@ const char* ZoneName(Zones zone) {
       return "FlashAttention.FlashAttention";
     case Zones::kFlashAttentionInclusive:
       return "FlashAttention.Inclusive";
+    case Zones::kVitFlashAttentionInclusive:
+      return "Vit.FlashAttention.Inclusive";
     case Zones::kFlashAttentionRmsNormAndPositionalEncoding:
       return "FlashAttention.RMSNormAndPositionalEncoding";
     case Zones::kFlashAttentionTileFlashAttention1:
@@ -106,6 +108,7 @@ const char* ZoneName(Zones zone) {
 hwy::ProfilerFlags ZoneFlags(Zones zone) {
   switch (zone) {
     case Zones::kFlashAttentionInclusive:
+    case Zones::kVitFlashAttentionInclusive:
     case Zones::kGenAttention:
     case Zones::kGenAttentionComputeQKV:
     case Zones::kGenAttentionDotSoftmaxWeightedSumInclusive:

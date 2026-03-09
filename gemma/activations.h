@@ -76,8 +76,16 @@ struct AttentionActivations {
                            : batch_size * layer_config.heads,
                        allocator)),
         vit_Q(MatFactory("Q2", batch_size, layer_config.qkv_dim, allocator)),
-        vit_K(MatFactory("K2", seq_len, layer_config.qkv_dim, allocator)),
-        vit_C(MatFactory("C2", batch_size, seq_len, allocator)),
+        vit_K_T(MatFactory(
+            "K2_T", hwy::RoundUpTo(seq_len, kMaxBF16PerVector),
+            layer_config.heads *
+                hwy::RoundUpTo(layer_config.qkv_dim, kMaxBF16PerVector),
+            allocator, MatPadding::kPacked)),
+        vit_V_T(MatFactory(
+            "V2_T", hwy::RoundUpTo(seq_len, kMaxBF16PerVector),
+            layer_config.heads *
+                hwy::RoundUpTo(layer_config.qkv_dim, kMaxBF16PerVector),
+            allocator, MatPadding::kPacked)),
         pre_att_rms_out(MatFactory("pre_att_rms_out", batch_size,
                                    config.model_dim, allocator)),
         // att is only valid for AttentionImpl::kOld.
@@ -126,7 +134,6 @@ struct AttentionActivations {
     q.AllocateAndAttachRowPtrs(row_ptrs);
     q_bf.AllocateAndAttachRowPtrs(row_ptrs);
     q_T.AllocateAndAttachRowPtrs(row_ptrs);
-    vit_C.AllocateAndAttachRowPtrs(row_ptrs);
     att_sums.AllocateAndAttachRowPtrs(row_ptrs);
   }
 
@@ -136,8 +143,7 @@ struct AttentionActivations {
     // q_T rows are always qkv_dim!
 
     vit_Q.OverrideRows(batch_size);
-    // vit_K stays seq_len!
-    vit_C.OverrideRows(batch_size);
+    // vit_K_T and vit_V_T stay seq_len!
 
     pre_att_rms_out.OverrideRows(batch_size);
     att.OverrideRows(batch_size);
@@ -167,8 +173,8 @@ struct AttentionActivations {
   MatStorageT<BF16> q_T;  // Transposed to maximize attention speed.
 
   MatStorageT<float> vit_Q;
-  MatStorageT<float> vit_K;
-  MatStorageT<float> vit_C;
+  MatStorageT<KV_t> vit_K_T;
+  MatStorageT<KV_t> vit_V_T;
 
   MatStorageT<float> pre_att_rms_out;
   MatStorageT<float> att;          // attention vector
@@ -214,8 +220,8 @@ struct AttentionActivationsPtrs {
     q_bf = activations.q_bf;
     q_T = activations.q_T;
     vit_Q = activations.vit_Q;
-    vit_K = activations.vit_K;
-    vit_C = activations.vit_C;
+    vit_K_T = activations.vit_K_T;
+    vit_V_T = activations.vit_V_T;
     pre_att_rms_out = activations.pre_att_rms_out;
     att = activations.att;
     att_out = activations.att_out;
@@ -233,8 +239,7 @@ struct AttentionActivationsPtrs {
     // q_T rows are always qkv_dim!
 
     vit_Q.OverrideRows(batch_size);
-    // vit_K stays seq_len!
-    vit_C.OverrideRows(batch_size);
+    // vit_K_T and vit_V_T stay seq_len!
 
     pre_att_rms_out.OverrideRows(batch_size);
     att.OverrideRows(batch_size);
@@ -267,8 +272,8 @@ struct AttentionActivationsPtrs {
   MatPtrT<BF16> q_T;
 
   MatPtrT<float> vit_Q;
-  MatPtrT<float> vit_K;
-  MatPtrT<float> vit_C;
+  MatPtrT<KV_t> vit_K_T;
+  MatPtrT<KV_t> vit_V_T;
 
   // Output of RMSNorm before attention, size batch_size x model_dim.
   MatPtrT<float> pre_att_rms_out;

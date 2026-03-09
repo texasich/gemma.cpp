@@ -13,6 +13,7 @@ namespace gcpp {
 enum class Zones {   // Keep sorted
   kFlashAttentionFlashAttention,
   kFlashAttentionInclusive,
+  kVitFlashAttentionInclusive,
   kFlashAttentionRmsNormAndPositionalEncoding,
   kFlashAttentionTileFlashAttention1,
   kFlashAttentionTileFlashAttention4,

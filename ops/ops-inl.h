@@ -669,10 +669,10 @@ HWY_INLINE HWY_MAYBE_UNUSED void MulByConstAndAddVT4Mem(
   size_t i = 0;
   while (i + NF * 2 <= size) {
     VF out0a, out1a, out2a, out3a, out0b, out1b, out2b, out3b;
-    out0a = hn::Load(df, out + i + out_offsets[0]);
-    out1a = hn::Load(df, out + i + out_offsets[1]);
-    out2a = hn::Load(df, out + i + out_offsets[2]);
-    out3a = hn::Load(df, out + i + out_offsets[3]);
+    out0a = hn::LoadU(df, out + i + out_offsets[0]);
+    out1a = hn::LoadU(df, out + i + out_offsets[1]);
+    out2a = hn::LoadU(df, out + i + out_offsets[2]);
+    out3a = hn::LoadU(df, out + i + out_offsets[3]);
     VF scale0 = hn::Set(df, scales[0]);
     VF scale1 = hn::Set(df, scales[1]);
     VF scale2 = hn::Set(df, scales[2]);
@@ -681,28 +681,70 @@ HWY_INLINE HWY_MAYBE_UNUSED void MulByConstAndAddVT4Mem(
     out1a = hn::Mul(out1a, scale1);
     out2a = hn::Mul(out2a, scale2);
     out3a = hn::Mul(out3a, scale3);
-    out0b = hn::Load(df, out + i + NF + out_offsets[0]);
-    out1b = hn::Load(df, out + i + NF + out_offsets[1]);
-    out2b = hn::Load(df, out + i + NF + out_offsets[2]);
-    out3b = hn::Load(df, out + i + NF + out_offsets[3]);
+    out0b = hn::LoadU(df, out + i + NF + out_offsets[0]);
+    out1b = hn::LoadU(df, out + i + NF + out_offsets[1]);
+    out2b = hn::LoadU(df, out + i + NF + out_offsets[2]);
+    out3b = hn::LoadU(df, out + i + NF + out_offsets[3]);
     out0b = hn::Mul(out0b, scale0);
     out1b = hn::Mul(out1b, scale1);
     out2b = hn::Mul(out2b, scale2);
     out3b = hn::Mul(out3b, scale3);
     MulAddNLanesVT4(df, v_bf, c_mem, HWY_MIN(num_lanes, 2 * NF), out0a, out1a,
                     out2a, out3a, out0b, out1b, out2b, out3b);
-    hn::Store(out0a, df, out + i + out_offsets[0]);
-    hn::Store(out1a, df, out + i + out_offsets[1]);
-    hn::Store(out2a, df, out + i + out_offsets[2]);
-    hn::Store(out3a, df, out + i + out_offsets[3]);
-    hn::Store(out0b, df, out + i + NF + out_offsets[0]);
-    hn::Store(out1b, df, out + i + NF + out_offsets[1]);
-    hn::Store(out2b, df, out + i + NF + out_offsets[2]);
-    hn::Store(out3b, df, out + i + NF + out_offsets[3]);
+    hn::StoreU(out0a, df, out + i + out_offsets[0]);
+    hn::StoreU(out1a, df, out + i + out_offsets[1]);
+    hn::StoreU(out2a, df, out + i + out_offsets[2]);
+    hn::StoreU(out3a, df, out + i + out_offsets[3]);
+    hn::StoreU(out0b, df, out + i + NF + out_offsets[0]);
+    hn::StoreU(out1b, df, out + i + NF + out_offsets[1]);
+    hn::StoreU(out2b, df, out + i + NF + out_offsets[2]);
+    hn::StoreU(out3b, df, out + i + NF + out_offsets[3]);
     i += NF * 2;
     v_bf += 4 * NF * NF;
   }
-  HWY_DASSERT(size == i);
+  if (i < size) {
+    VF out0a, out1a, out2a, out3a, out0b, out1b, out2b, out3b;
+    out0a = hn::LoadN(df, out + i + out_offsets[0], size - i);
+    out1a = hn::LoadN(df, out + i + out_offsets[1], size - i);
+    out2a = hn::LoadN(df, out + i + out_offsets[2], size - i);
+    out3a = hn::LoadN(df, out + i + out_offsets[3], size - i);
+    VF scale0 = hn::Set(df, scales[0]);
+    VF scale1 = hn::Set(df, scales[1]);
+    VF scale2 = hn::Set(df, scales[2]);
+    VF scale3 = hn::Set(df, scales[3]);
+    out0a = hn::Mul(out0a, scale0);
+    out1a = hn::Mul(out1a, scale1);
+    out2a = hn::Mul(out2a, scale2);
+    out3a = hn::Mul(out3a, scale3);
+    if (i + NF < size) {
+      out0b = hn::LoadN(df, out + i + NF + out_offsets[0], size - i - NF);
+      out1b = hn::LoadN(df, out + i + NF + out_offsets[1], size - i - NF);
+      out2b = hn::LoadN(df, out + i + NF + out_offsets[2], size - i - NF);
+      out3b = hn::LoadN(df, out + i + NF + out_offsets[3], size - i - NF);
+      out0b = hn::Mul(out0b, scale0);
+      out1b = hn::Mul(out1b, scale1);
+      out2b = hn::Mul(out2b, scale2);
+      out3b = hn::Mul(out3b, scale3);
+    } else {
+      out0b = hn::Zero(df);
+      out1b = hn::Zero(df);
+      out2b = hn::Zero(df);
+      out3b = hn::Zero(df);
+    }
+    // Note that v_bf is always padded, so we can always load 2 * NF elements.
+    MulAddNLanesVT4(df, v_bf, c_mem, HWY_MIN(num_lanes, 2 * NF), out0a, out1a,
+                    out2a, out3a, out0b, out1b, out2b, out3b);
+    hn::StoreN(out0a, df, out + i + out_offsets[0], size - i);
+    hn::StoreN(out1a, df, out + i + out_offsets[1], size - i);
+    hn::StoreN(out2a, df, out + i + out_offsets[2], size - i);
+    hn::StoreN(out3a, df, out + i + out_offsets[3], size - i);
+    if (i + NF < size) {
+      hn::StoreN(out0b, df, out + i + NF + out_offsets[0], size - i - NF);
+      hn::StoreN(out1b, df, out + i + NF + out_offsets[1], size - i - NF);
+      hn::StoreN(out2b, df, out + i + NF + out_offsets[2], size - i - NF);
+      hn::StoreN(out3b, df, out + i + NF + out_offsets[3], size - i - NF);
+    }
+  }
 }
 
 template <class DF, class VF = hn::Vec<DF>>
@@ -743,26 +785,33 @@ HWY_INLINE HWY_MAYBE_UNUSED void MulByConstAndAddVT1Mem(
   size_t i = 0;
   while (i + NF * 2 <= size) {
     VF out0a, out0b;
-    out0a = hn::Load(df, out + i + out_offsets[0]);
+    out0a = hn::LoadU(df, out + i + out_offsets[0]);
     VF scale0 = hn::Set(df, scales[0]);
     out0a = hn::Mul(out0a, scale0);
-    out0b = hn::Load(df, out + i + NF + out_offsets[0]);
+    out0b = hn::LoadU(df, out + i + NF + out_offsets[0]);
     out0b = hn::Mul(out0b, scale0);
     MulAddNLanesVT1(df, v_bf, c_mem, HWY_MIN(num_lanes, 2 * NF), out0a, out0b);
-    hn::Store(out0a, df, out + i + out_offsets[0]);
-    hn::Store(out0b, df, out + i + NF + out_offsets[0]);
+    hn::StoreU(out0a, df, out + i + out_offsets[0]);
+    hn::StoreU(out0b, df, out + i + NF + out_offsets[0]);
     i += NF * 2;
     v_bf += 4 * NF * NF;
   }
-  while (i < size) {
-    float sum = out[i + out_offsets[0]] * scales[0];
-    const BF16* HWY_RESTRICT v_local = v_bf;
-    for (size_t lane = 0; lane < HWY_MIN(num_lanes, 2 * NF);
-         ++lane, v_local += 2 * NF) {
-      sum += hwy::ConvertScalarTo<float>(*v_local) * c_mem[lane];
+  if (i < size) {
+    VF out0a, out0b;
+    out0a = hn::LoadN(df, out + i + out_offsets[0], size - i);
+    VF scale0 = hn::Set(df, scales[0]);
+    out0a = hn::Mul(out0a, scale0);
+    if (i + NF < size) {
+      out0b = hn::LoadN(df, out + i + NF + out_offsets[0], size - i - NF);
+      out0b = hn::Mul(out0b, scale0);
+    } else {
+      out0b = hn::Zero(df);
     }
-    ++i;
-    ++v_bf;
+    MulAddNLanesVT1(df, v_bf, c_mem, HWY_MIN(num_lanes, 2 * NF), out0a, out0b);
+    hn::StoreN(out0a, df, out + i + out_offsets[0], size - i);
+    if (i + NF < size) {
+      hn::StoreN(out0b, df, out + i + NF + out_offsets[0], size - i - NF);
+    }
   }
 }
 
