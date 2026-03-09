@@ -740,6 +740,10 @@ void GenerateImageTokensT(const ModelConfig& config,
   // Weights are for the full PaliGemma model, not just the ViT part.
   PrefillVit(config, weights, prefill_runtime_config, image, image_tokens,
              prefill_activations, env);
+
+  // No-op if the profiler is disabled. Printing now ensures that the
+  // `PrintResults` after prefill does not include the image token part.
+  env.ctx.profiler.PrintResults();
 }
 
 // NOLINTNEXTLINE(google-readability-namespace-comments)
