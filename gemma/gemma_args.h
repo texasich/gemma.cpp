@@ -152,6 +152,7 @@ struct RuntimeConfig {
   // If not set, it will be set based on the attention_impl.
   // F32 for tiled
   // BF16 for tiled bf16
+  // Int8 works for both tiled and tiled bf16.
   // If you want to use type other than F32 or BF16, you might need to update
   // call upcasted.
   std::optional<Type> kv_cache_type = {};

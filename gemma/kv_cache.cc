@@ -84,13 +84,17 @@ KVCache::KVCache(const ModelConfig& config, const InferenceArgs& inference_args,
     const size_t num_tiles =
         hwy::DivCeil(CappedSeqLen(config, inference_args), kTileSize);
     tiled_seq_len = num_tiles * kTileSize;
-    int tile_length = 2 * config.layer_configs[0].qkv_dim * kTileSize;
     Type kv_cache_type;
     if (runtime_config.attention_impl == AttentionImpl::kFlashTransposedQsBF16
         || hwy::IsSame<KV_t, BF16>()) {
       kv_cache_type = runtime_config.kv_cache_type.value_or(Type::kBF16);
     } else {
       kv_cache_type = runtime_config.kv_cache_type.value_or(Type::kF32);
+    }
+
+    int tile_length = 2 * config.layer_configs[0].qkv_dim * kTileSize;
+    if (kv_cache_type == Type::kInt8) {
+      tile_length += 2 * sizeof(BF16) * kTileSize;
     }
     auto num_tiles_per_head = [](size_t window_size, size_t prefill_tbatch_size,
                                  size_t max_seq_len) {

@@ -126,6 +126,8 @@ struct TestDecompress2 {
       HWY_ASSERT(stats.L1().Max() <= 0.08f);
       HWY_ASSERT(IsInside(0.02, 0.05, stats.WeightedAverageL1()));
       HWY_ASSERT(IsInside(18.0, 62.0, stats.GeomeanValueDivL1()));
+    } else if constexpr (hwy::IsSame<Packed, int8_t>()) {
+      HWY_ASSERT(stats.L1().Max() <= 0.6f);
     } else {
       HWY_ABORT("Unhandled type requested by ForeachPackedAndRawType");
     }
@@ -200,6 +202,8 @@ struct TestShortLengths {
         HWY_ASSERT(stats.L1().Max() <= 0.14f);
         HWY_ASSERT(IsInside(7E-5, 0.06, stats.WeightedAverageL1()));
         HWY_ASSERT(IsInside(11.0, 180.0, stats.GeomeanValueDivL1()));
+      } else if constexpr (hwy::IsSame<Packed, int8_t>()) {
+        HWY_ASSERT(stats.L1().Max() <= 0.6f);
       } else {
         HWY_ABORT("Unhandled type requested by ForeachPackedAndRawType");
       }

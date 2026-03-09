@@ -1260,6 +1260,52 @@ static HWY_NOINLINE void ApplyMasking(
   }
 }
 
+template <int kNumQueries, class DF, class VF = hn::Vec<DF>>
+static HWY_INLINE void MultiplyByScale(DF df, const BF16* scales, VF& x0_p0,
+                                       VF& x0_p1, VF& x1_p0, VF& x1_p1,
+                                       VF& x2_p0, VF& x2_p1, VF& x3_p0,
+                                       VF& x3_p1, VF& x4_p0, VF& x4_p1,
+                                       VF& x5_p0, VF& x5_p1, VF& x6_p0,
+                                       VF& x6_p1, VF& x7_p0, VF& x7_p1) {
+  const size_t kTileSize = hn::Lanes(df);
+  const PackedSpan<const BF16> scales_span =
+      MakeConstSpan(scales, 2 * kTileSize);
+  VF scales_p0, scales_p1;
+  Decompress2(df, scales_span, 0, scales_p0, scales_p1);
+  if constexpr (kNumQueries >= 1) {
+    x0_p0 = hn::Mul(x0_p0, scales_p0);
+    x0_p1 = hn::Mul(x0_p1, scales_p1);
+  }
+  if constexpr (kNumQueries >= 2) {
+    x1_p0 = hn::Mul(x1_p0, scales_p0);
+    x1_p1 = hn::Mul(x1_p1, scales_p1);
+  }
+  if constexpr (kNumQueries >= 3) {
+    x2_p0 = hn::Mul(x2_p0, scales_p0);
+    x2_p1 = hn::Mul(x2_p1, scales_p1);
+  }
+  if constexpr (kNumQueries >= 4) {
+    x3_p0 = hn::Mul(x3_p0, scales_p0);
+    x3_p1 = hn::Mul(x3_p1, scales_p1);
+  }
+  if constexpr (kNumQueries >= 5) {
+    x4_p0 = hn::Mul(x4_p0, scales_p0);
+    x4_p1 = hn::Mul(x4_p1, scales_p1);
+  }
+  if constexpr (kNumQueries >= 6) {
+    x5_p0 = hn::Mul(x5_p0, scales_p0);
+    x5_p1 = hn::Mul(x5_p1, scales_p1);
+  }
+  if constexpr (kNumQueries >= 7) {
+    x6_p0 = hn::Mul(x6_p0, scales_p0);
+    x6_p1 = hn::Mul(x6_p1, scales_p1);
+  }
+  if constexpr (kNumQueries >= 8) {
+    x7_p0 = hn::Mul(x7_p0, scales_p0);
+    x7_p1 = hn::Mul(x7_p1, scales_p1);
+  }
+}
+
 // Performs tiled flash attention for arbitrary number of queries
 // It depends on kv being tiled.
 // Runs 2 loops one over tiles, and inner one over queries(up to 4 at a time).
@@ -1400,6 +1446,21 @@ HWY_NOINLINE void TileFlashAttentionReturnExpSumsAndMaxLogits(
           false,
           "Query type type not supported, only float and BF16 are supported");
     }
+    // microscaling
+    // TODO: Change to more generic function to inform if we should use
+    // microscaling or not.
+    constexpr bool kUseMicroScaling = IsInt8<KV_T>();
+    if constexpr (kUseMicroScaling) {
+      // After end of the tile, we have kTileSize * 2 bfloat16 for the
+      // microscaling scales for K and V.
+      const BF16* microscaling_scales_k =
+          reinterpret_cast<const BF16*>(tile_base + qkv_dim * 2 * kTileSize) +
+          pos_in_tile;
+      MultiplyByScale<kNumQueries>(df, microscaling_scales_k, x_0_p_0, x_0_p_1,
+                                   x_1_p_0, x_1_p_1, x_2_p_0, x_2_p_1, x_3_p_0,
+                                   x_3_p_1, x_4_p_0, x_4_p_1, x_5_p_0, x_5_p_1,
+                                   x_6_p_0, x_6_p_1, x_7_p_0, x_7_p_1);
+    }
 
     constexpr int kFirstHalfAmountOfQueries = std::min(kNumQueries, 4);
     constexpr int kSecondHalfAmountOfQueries =
@@ -1433,6 +1494,15 @@ HWY_NOINLINE void TileFlashAttentionReturnExpSumsAndMaxLogits(
         x_3_p_0, x_3_p_1, x_4_p_0, x_4_p_1, x_5_p_0, x_5_p_1, x_6_p_0, x_6_p_1,
         x_7_p_0, x_7_p_1, max_logits, exp_denominator_sums, scales, q_group_idx,
         kNumQueriesPerGroup);
+    if constexpr (kUseMicroScaling) {
+      const BF16* microscaling_scales_v =
+          reinterpret_cast<const BF16*>(tile_base + qkv_dim * 2 * kTileSize) +
+          kTileSize + pos_in_tile;
+      MultiplyByScale<kNumQueries>(df, microscaling_scales_v, x_0_p_0, x_0_p_1,
+                                   x_1_p_0, x_1_p_1, x_2_p_0, x_2_p_1, x_3_p_0,
+                                   x_3_p_1, x_4_p_0, x_4_p_1, x_5_p_0, x_5_p_1,
+                                   x_6_p_0, x_6_p_1, x_7_p_0, x_7_p_1);
+    }
     if constexpr (IsF32<Q_T>()) {
       MulByConstAndAddTileUpTo8<kNumQueries>(
           df, scales, x_0_p_0, x_0_p_1, x_1_p_0, x_1_p_1, x_2_p_0, x_2_p_1,

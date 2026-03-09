@@ -508,6 +508,11 @@ decltype(auto) CallUpcastedKVs(hwy::Span<const MatPtr> base, const Func& func,
     auto matptrs = make_matptr_vec(BF16{});
     hwy::Span<const MatPtrT<BF16>> matptrs_span(matptrs.data(), matptrs.size());
     return func(matptrs_span, std::forward<Args>(args)...);
+  } else if (type == Type::kInt8) {
+    auto matptrs = make_matptr_vec(int8_t{});
+    hwy::Span<const MatPtrT<int8_t>> matptrs_span(matptrs.data(),
+                                                  matptrs.size());
+    return func(matptrs_span, std::forward<Args>(args)...);
   } else {
     HWY_ABORT("Unhandled type %s.", TypeName(type));
   }

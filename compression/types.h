@@ -193,6 +193,11 @@ constexpr bool IsF32() {
 }
 
 template <typename Packed>
+constexpr bool IsInt8() {
+  return hwy::IsSame<hwy::RemoveCvRef<Packed>, int8_t>();
+}
+
+template <typename Packed>
 constexpr bool IsBF16() {
   return hwy::IsSame<hwy::RemoveCvRef<Packed>, BF16>();
 }
@@ -231,12 +236,13 @@ enum class Type {
   kI8,
   kU16,
   kU8,
+  kInt8,
 };
 // These are used in `ModelConfig.Specifier`, hence the strings will not
 // change, though new ones may be added.
-static constexpr const char* kTypeStrings[] = {"unknown", "f32", "bf16", "sfp",
-                                               "nuq",     "f64", "u32",  "u64",
-                                               "i8",      "u16", "u8"};
+static constexpr const char* kTypeStrings[] = {
+    "unknown", "f32", "bf16", "sfp", "nuq", "f64",
+    "u32",     "u64", "i8",   "u16", "u8",  "int8"};
 static constexpr size_t kNumTypes =
     sizeof(kTypeStrings) / sizeof(kTypeStrings[0]);
 static constexpr size_t kTypeBits[] = {
@@ -251,6 +257,7 @@ static constexpr size_t kTypeBits[] = {
     8 * sizeof(I8Stream),
     8 * sizeof(uint16_t),
     8 * sizeof(uint8_t),
+    8 * sizeof(int8_t),
 };
 
 static inline bool EnumValid(Type type) {
@@ -281,6 +288,8 @@ constexpr Type TypeEnum() {
     return Type::kU16;
   } else if constexpr (hwy::IsSame<Packed, uint8_t>()) {
     return Type::kU8;
+  } else if constexpr (hwy::IsSame<Packed, int8_t>()) {
+    return Type::kInt8;
   } else {
     return Type::kUnknown;
   }

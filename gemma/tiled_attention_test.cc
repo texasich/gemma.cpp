@@ -1,7 +1,10 @@
 #include <stddef.h>
 
+#include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <tuple>
 #include <vector>
 
@@ -42,7 +45,7 @@ struct AttentionTestEnv {
       int qkv_dim, int kv_seq_len, int attention_window_size, int num_kv_heads,
       int num_heads, int num_tokens, int last_pos, float att_cap, int layer_idx,
       int layers_total, int qbatch_size, AttentionImpl attention_impl,
-      )
+      std::optional<Type> kv_cache_type = {} )
       : ctx(threading_args), env(ctx) {
     layer_config.heads = num_heads;
     layer_config.kv_heads = num_kv_heads;
@@ -65,6 +68,7 @@ struct AttentionTestEnv {
                                                *tensor_info_registry);
 
     runtime_config.attention_impl = attention_impl;
+    runtime_config.kv_cache_type = kv_cache_type;
     inference_args.seq_len = kv_seq_len;
 
     all_queries.Reserve(qbatch_size);
@@ -72,7 +76,8 @@ struct AttentionTestEnv {
     for (int q = 0; q < qbatch_size; ++q) {
       kv_caches.emplace_back(model_config, inference_args, runtime_config,
                              ctx.allocator);
-      if (attention_impl == AttentionImpl::kFlashTransposedQsBF16) {
+      if (attention_impl == AttentionImpl::kFlashTransposedQsBF16 &&
+          kv_caches.back().compact_kv_cache_ptr.GetType() == Type::kBF16) {
         MatPtrT<BF16> compact_kv_cache = kv_caches.back().compact_kv_cache_ptr;
         for (int i = 0; i < compact_kv_cache.Rows(); ++i) {
           for (int j = 0; j < compact_kv_cache.Cols(); ++j) {
@@ -98,8 +103,65 @@ struct AttentionTestEnv {
           }
         }
       } else if (kv_caches.back().compact_kv_cache_ptr.HasPtr()) {
-        MatPtrT<KV_t> compact_kv_cache = kv_caches.back().compact_kv_cache_ptr;
-        FillMatPtrT(compact_kv_cache);
+        if (kv_caches.back().compact_kv_cache_ptr.GetType() == Type::kInt8) {
+          MatPtrT<int8_t> compact_kv_cache =
+              kv_caches.back().compact_kv_cache_ptr;
+          for (int i = 0; i < compact_kv_cache.Rows(); ++i) {
+            BF16* scales_ptr = HWY_RCAST_ALIGNED(
+                BF16*, compact_kv_cache.Row(i) +
+                           2 * qkv_dim * gcpp::KVCache::kTileSize);
+            for (int in_tile_idx = 0; in_tile_idx < gcpp::KVCache::kTileSize;
+                 ++in_tile_idx) {
+              // Compute scale and fill K
+              float max_k = 0.0f;
+              for (int dim = 0; dim < qkv_dim; ++dim) {
+                int j = dim * gcpp::KVCache::kTileSize + in_tile_idx;
+                float expected = hwy::Unpredictable1() * 0.01f * (i + j + 1);
+                max_k = std::max(max_k, expected);
+              }
+              float scale_k = max_k / 127.0f;
+              if (scale_k == 0.0f) scale_k = 1.0f;
+              scales_ptr[in_tile_idx] = hwy::ConvertScalarTo<BF16>(scale_k);
+
+              for (int dim = 0; dim < qkv_dim; ++dim) {
+                int j = dim * gcpp::KVCache::kTileSize + in_tile_idx;
+                float expected = hwy::Unpredictable1() * 0.01f * (i + j + 1);
+                compact_kv_cache.Row(i)[j] =
+                    static_cast<int8_t>(std::round(expected / scale_k));
+              }
+
+              // Compute scale and fill V
+              float max_v = 0.0f;
+              for (int dim = 0; dim < qkv_dim; ++dim) {
+                int j = qkv_dim * gcpp::KVCache::kTileSize +
+                        in_tile_idx * qkv_dim + dim;
+                float expected = hwy::Unpredictable1() * 0.01f * (i + j + 1);
+                max_v = std::max(max_v, expected);
+              }
+              float scale_v = max_v / 127.0f;
+              if (scale_v == 0.0f) scale_v = 1.0f;
+              scales_ptr[gcpp::KVCache::kTileSize + in_tile_idx] =
+                  hwy::ConvertScalarTo<BF16>(scale_v);
+
+              for (int dim = 0; dim < qkv_dim; ++dim) {
+                int j = qkv_dim * gcpp::KVCache::kTileSize +
+                        in_tile_idx * qkv_dim + dim;
+                float expected = hwy::Unpredictable1() * 0.01f * (i + j + 1);
+                compact_kv_cache.Row(i)[j] =
+                    static_cast<int8_t>(std::round(expected / scale_v));
+              }
+            }
+          }
+        } else if (kv_caches.back().compact_kv_cache_ptr.GetType() ==
+                   Type::kBF16) {
+          MatPtrT<BF16> compact_kv_cache =
+              kv_caches.back().compact_kv_cache_ptr;
+          FillMatPtrT(compact_kv_cache);
+        } else {
+          MatPtrT<float> compact_kv_cache =
+              kv_caches.back().compact_kv_cache_ptr;
+          FillMatPtrT(compact_kv_cache);
+        }
       } else {
         FillMatPtrT(kv_caches.back().kv_cache);
       }
@@ -698,6 +760,50 @@ void TestAttentionMultipleTokensBF16() {
   AttentionTestEnv test_env(qkv_dim, kv_seq_len, kv_seq_len, num_kv_heads,
                             num_heads, num_tokens, last_pos, att_cap, layer_idx,
                             layers_total, qbatch_size, attention_impl);
+  test_env.SetupWeights();
+  FillMatPtrT(test_env.activations->attention.pre_att_rms_out);
+  FillMatPtrT(test_env.activations->attention.q);
+  FillMatPtrT(test_env.activations->attention.vit_Q);
+  FillMatPtrT(test_env.activations->attention.vit_K);
+  FillMatPtrT(test_env.activations->attention.att);
+  FillMatPtrT(test_env.activations->attention.att_out);
+  FillMatPtrT(test_env.activations->attention.softmax_max);
+  FillMatPtrT(test_env.activations->attention.softmax_d);
+
+  int flags = AttentionImplToFlags(attention_impl, HWY_NATIVE_DOT_BF16);
+  TiledAttention(attention_impl, num_tokens, layer_idx, *test_env.layer,
+                 test_env.activations->attention, *test_env.qbatch,
+                 test_env.env, flags);
+  std::cerr << "att_out\n";
+  PrintMatPtr(test_env.activations->attention.att_out);
+  for (size_t i = 0; i < test_env.activations->attention.att_out.Rows(); ++i) {
+    EXPECT_TRUE(hwy::CompareArraySimilar(
+        AttentionMultipleTokensAttentionGoldens.data() +
+            i * test_env.activations->attention.att_out.Cols(),
+        test_env.activations->attention.att_out.Row(i),
+        test_env.activations->attention.att_out.Cols(), 1e-1,
+        hwy::TargetName(HWY_TARGET), __FILE__, __LINE__))
+        << "att_out mismatch for query: " << i;
+  }
+}
+
+void TestAttentionMultipleTokensInt8() {
+  int qkv_dim = 64;
+  int kv_seq_len = 64;
+  int num_kv_heads = 2;
+  int num_heads = 4;
+  int num_tokens = 2;
+  int last_pos = 62;  // so in the tbatch token 0 will have 63 and token 1
+                      // will have 64 tokens to attend to.
+  float att_cap = 10.0f;
+  int layer_idx = 0;
+  int layers_total = 1;
+  int qbatch_size = 2;
+  AttentionImpl attention_impl = AttentionImpl::kFlashTransposedQsBF16;
+  AttentionTestEnv test_env(qkv_dim, kv_seq_len, kv_seq_len, num_kv_heads,
+                            num_heads, num_tokens, last_pos, att_cap, layer_idx,
+                            layers_total, qbatch_size, attention_impl,
+                            Type::kInt8);
   test_env.SetupWeights();
   FillMatPtrT(test_env.activations->attention.pre_att_rms_out);
   FillMatPtrT(test_env.activations->attention.q);

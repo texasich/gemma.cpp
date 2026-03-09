@@ -492,6 +492,139 @@ void TestTiledFlashAttentionBF16() {
   }
 }
 
+void TestTiledFlashAttentionInt8() {
+  int qkv_dim = 64;
+  int kv_seq_len = 60;  // number of tokens we will attend to. Not divisible by
+                        // tiles size to test the padding logic.
+  int padded_kv_seq_len = hwy::RoundUpTo(kv_seq_len, gcpp::KVCache::kTileSize);
+  float att_cap = 10.0f;
+  int num_queries = 8;
+  int num_queries_per_timestep = 4;
+  int num_tokens = num_queries / num_queries_per_timestep;
+  int kv_seq_end =
+      kv_seq_len - hwy::DivCeil(num_queries, num_queries_per_timestep);
+  ThreadingArgs threading_args;
+  ThreadingContext ctx(threading_args);
+
+  int num_tiles = padded_kv_seq_len / gcpp::KVCache::kTileSize;
+  int tile_size_bytes = 2 * qkv_dim * gcpp::KVCache::kTileSize +
+                        2 * sizeof(BF16) * gcpp::KVCache::kTileSize;
+
+  MatStorageT<int8_t> kv("kv", Extents2D(num_tiles, tile_size_bytes),
+                         ctx.allocator, MatPadding::kPacked);
+
+  // fill in kvs with predictable, synthetic data
+  for (int i = 0; i < padded_kv_seq_len; ++i) {
+    int tile_idx = i / gcpp::KVCache::kTileSize;
+    int in_tile_offset = i % gcpp::KVCache::kTileSize;
+    int8_t* tile_ptr = kv.Row(tile_idx);
+    BF16* scales_ptr = HWY_RCAST_ALIGNED(
+        BF16*, tile_ptr + 2 * qkv_dim * gcpp::KVCache::kTileSize);
+
+    // Generate float values for K and V
+    std::vector<float> k_vals(qkv_dim);
+    std::vector<float> v_vals(qkv_dim);
+    float max_abs_k = 0.0f;
+    float max_abs_v = 0.0f;
+
+    for (int j = 0; j < qkv_dim; ++j) {
+      k_vals[j] = 0.01f * (i + 1) / (j + 1);
+      v_vals[j] = 0.02f * (i + 1) / (j + 1);
+      max_abs_k = std::max(max_abs_k, std::abs(k_vals[j]));
+      max_abs_v = std::max(max_abs_v, std::abs(v_vals[j]));
+    }
+
+    // Quantize K
+    float scale_k = max_abs_k / 127.0f;
+    if (scale_k == 0.0f) scale_k = 1.0f;
+    scales_ptr[in_tile_offset] = hwy::ConvertScalarTo<BF16>(scale_k);
+    for (int j = 0; j < qkv_dim; ++j) {
+      int val = std::round(k_vals[j] / scale_k);
+      val = std::max(-127, std::min(127, val));
+      tile_ptr[j * gcpp::KVCache::kTileSize + in_tile_offset] =
+          static_cast<int8_t>(val);
+    }
+
+    // Quantize V
+    float scale_v = max_abs_v / 127.0f;
+    if (scale_v == 0.0f) scale_v = 1.0f;
+    scales_ptr[gcpp::KVCache::kTileSize + in_tile_offset] =
+        hwy::ConvertScalarTo<BF16>(scale_v);
+    size_t v_offset = qkv_dim * gcpp::KVCache::kTileSize;
+    for (int j = 0; j < qkv_dim; ++j) {
+      int val = std::round(v_vals[j] / scale_v);
+      val = std::max(-127, std::min(127, val));
+      tile_ptr[v_offset + in_tile_offset * qkv_dim + j] =
+          static_cast<int8_t>(val);
+    }
+  }
+
+  std::vector<float> q_float(4 * qkv_dim);
+  std::vector<float> q_float2(4 * qkv_dim);
+  // fill in qs with predictable, synthetic data
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < qkv_dim; j++) {
+      float val_1 = 0.01f * (i + 1) / (j + 1);
+      float val_2 = 0.01f * (i + 4 + 1) / (j + 1);
+      q_float[j * 4 + i] = val_1;
+      q_float2[j * 4 + i] = val_2;
+    }
+  }
+  const float* q_T[2] = {q_float.data(), q_float2.data()};
+
+  MatStorageT<float> att_out("att_out", Extents2D(num_queries, qkv_dim),
+                             ctx.allocator, MatPadding::kPacked);
+  using DF = hn::ScalableTag<float>;
+  const DF df;
+  HWY_LANES_CONSTEXPR size_t lanes = hn::Lanes(df);
+  size_t num_queries_rounded_to_laness = hwy::RoundUpTo(num_queries, lanes);
+  std::vector<float> exp_denominator_sums(num_queries_rounded_to_laness);
+  std::vector<float> max_logits(num_queries_rounded_to_laness);
+  for (size_t i = 0; i < num_queries; ++i) {
+    hwy::ZeroBytes(att_out.Row(i),
+                   qkv_dim * sizeof(decltype(att_out.Row(i)[0])));
+    exp_denominator_sums[i] = 0.0f;
+    max_logits[i] = -std::numeric_limits<float>::max() / 2.0f;
+  }
+  std::vector<size_t, hwy::AlignedAllocator<size_t>> start_pos_per_query;
+  std::vector<size_t, hwy::AlignedAllocator<size_t>> last_pos_per_query;
+  start_pos_per_query.reserve(num_queries);
+  last_pos_per_query.reserve(num_queries);
+  for (int token_idx = 0; token_idx < num_tokens; ++token_idx) {
+    ssize_t query_last_pos = kv_seq_end + token_idx;
+    ssize_t query_start_pos =
+        std::max(query_last_pos - 100000 + 1, static_cast<ssize_t>(0));
+    for (int q_head_idx = 0; q_head_idx < num_queries_per_timestep;
+         ++q_head_idx) {
+      start_pos_per_query.push_back(query_start_pos);
+      last_pos_per_query.push_back(query_last_pos);
+    }
+  }
+
+  hwy::Span<const MatPtr> kvs(&kv, 1);
+  DispatchTileFlashAttentionReturnExpSumsAndMaxLogits(
+      kvs, num_queries, hwy::Span<const float*>(q_T, 2),
+      hwy::Span<const size_t>(start_pos_per_query),
+      hwy::Span<const size_t>(last_pos_per_query), att_cap, att_out,
+      exp_denominator_sums.data(), max_logits.data());
+
+  // TODO: Replace with Other implementation for generating goldens.
+  // Current values are taken from a point in time where code was run with gemma
+  // and output looked good. Not ideal but should be good enough to test the
+  // plumbing and detect regressions.
+  PrintMatPtr(att_out);
+  for (int i = 0; i < num_queries; ++i) {
+    std::cerr << "exp_d: " << exp_denominator_sums[i]
+              << " max_logit: " << max_logits[i] << std::endl;
+    EXPECT_NEAR(exp_denominator_sums[i], exp_denominator_sums_gold[i], 1e-2f)
+        << "i=" << i;
+    EXPECT_NEAR(max_logits[i], max_logits_gold[i], 1e-3f) << "i=" << i;
+    for (int j = 0; j < qkv_dim; ++j) {
+      EXPECT_NEAR(att_out.Row(i)[j], att_out_gold[i * qkv_dim + j], 5e-3f);
+    }
+  }
+}
+
 // NOLINTNEXTLINE(google-readability-namespace-comments)
 }  // namespace HWY_NAMESPACE
 }  // namespace gcpp
@@ -502,6 +635,9 @@ HWY_AFTER_NAMESPACE();
 namespace gcpp {
 HWY_BEFORE_TEST(FlashAttentionTest);
 HWY_EXPORT_AND_TEST_P(FlashAttentionTest, TestAttention);
+HWY_EXPORT_AND_TEST_P(FlashAttentionTest, TestTiledFlashAttention);
+HWY_EXPORT_AND_TEST_P(FlashAttentionTest, TestTiledFlashAttentionBF16);
+HWY_EXPORT_AND_TEST_P(FlashAttentionTest, TestTiledFlashAttentionInt8);
 HWY_AFTER_TEST();
 
 }  // namespace gcpp

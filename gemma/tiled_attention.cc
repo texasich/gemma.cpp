@@ -69,6 +69,27 @@ static HWY_INLINE void MergeOnlineSoftmax(
   accumulator_softmax_d = d_new;
 }
 
+template <typename T>
+T AbsMaxOfSpan(hwy::Span<const T> span) {
+  hn::ScalableTag<T> dt;
+  using VT = hn::Vec<decltype(dt)>;
+  VT max_vec = hn::Set(dt, 0.0f);
+  const size_t lanes = hn::Lanes(dt);
+  size_t i = 0;
+  // Process full vectors using LoadU.
+  for (; i + lanes <= span.size(); i += lanes) {
+    const VT vec = hn::Abs(hn::LoadU(dt, span.data() + i));
+    max_vec = hn::Max(max_vec, vec);
+  }
+  // Process remaining elements using LoadN.
+  const size_t remaining = span.size() - i;
+  if (HWY_UNLIKELY(remaining != 0)) {
+    const VT vec = hn::Abs(hn::LoadN(dt, span.data() + i, remaining));
+    max_vec = hn::Max(max_vec, vec);
+  }
+  return hn::ReduceMax(dt, max_vec);
+}
+
 // Forked from ComputeQKV. But it stores the K/V in the tiled format
 // KV_T is type stored in the KV cache (typically float or BF16).
 template <typename KV_T>
@@ -168,9 +189,9 @@ static HWY_INLINE void ComputeQKVTransposedTile(
             const float* kv_row =
                 kv_out_data +
                 (token_in_tile_idx * qbatch.Size() + query_idx) * kv_out_cols;
-            const float* k_ptr = kv_row + kv_head * 2 * qkv_dim;
-            const float* v_ptr = kv_row + kv_head * 2 * qkv_dim + qkv_dim;
-            hwy::CopyBytes(k_ptr, k_f32, qkv_dim * sizeof(float));
+            const float* k_values = kv_row + kv_head * 2 * qkv_dim;
+            const float* v_values = kv_row + kv_head * 2 * qkv_dim + qkv_dim;
+            hwy::CopyBytes(k_values, k_f32, qkv_dim * sizeof(float));
             if (layer.key_norm_scale.HasPtr()) {
               CallUpcasted(&layer.key_norm_scale, [&](const auto* weights_t) {
                 RMSNormInplace(weights_t->PackedScale1(), /*w_ofs=*/0, k_f32,
@@ -183,7 +204,53 @@ static HWY_INLINE void ComputeQKVTransposedTile(
                 /*mul=*/1.0f);
 
             const size_t in_tile_idx = current_pos_mod % KVCache::kTileSize;
-            if (attention_impl == AttentionImpl::kFlashTransposedQsBF16) {
+            // `v_cache_values` is a pointer to the V data that will be
+            // compressed and stored in the KV cache. By default, it points to
+            // the raw `v_values`.
+            const float* v_cache_values = v_values;
+            // `v_buf` is a temporary buffer used only when quantizing V values
+            // to int8_t.
+            HWY_ALIGN float v_buf[kMaxQKVDim];
+
+            if constexpr (IsInt8<KV_T>()) {
+              BF16* scales_ptr = HWY_RCAST_ALIGNED(
+                  BF16*, tile_ptr + 2 * qkv_dim * KVCache::kTileSize);
+
+              auto scale_and_store = [&](float* values, int dim,
+                                         size_t scale_idx) HWY_ATTR {
+                const float max_abs =
+                    AbsMaxOfSpan(hwy::Span<const float>(values, dim));
+                float scale = max_abs / 127.0f;
+                if (scale == 0.0f) scale = 1.0f;
+                scales_ptr[scale_idx] = hwy::ConvertScalarTo<BF16>(scale);
+                const float inv_scale = 1.0f / scale;
+                const hn::Vec<decltype(df)> v_inv_scale =
+                    hn::Set(df, inv_scale);
+                const size_t lanes = hn::Lanes(df);
+                size_t i = 0;
+                for (; i + lanes <= dim; i += lanes) {
+                  hn::StoreU(hn::Mul(hn::LoadU(df, values + i), v_inv_scale),
+                             df, values + i);
+                }
+                if (HWY_UNLIKELY(i < dim)) {
+                  hn::StoreN(
+                      hn::Mul(hn::LoadN(df, values + i, dim - i), v_inv_scale),
+                      df, values + i, dim - i);
+                }
+              };
+
+              // K Scaling
+              scale_and_store(k_f32, qkv_dim, in_tile_idx);
+
+              // V Scaling: Copy `v_values` to `v_buf`, scale `v_buf` in-place,
+              // and then update `v_cache_values` to point to `v_buf`.
+              hwy::CopyBytes(v_values, v_buf, qkv_dim * sizeof(float));
+              scale_and_store(v_buf, qkv_dim, KVCache::kTileSize + in_tile_idx);
+              v_cache_values = v_buf;
+            }
+
+            if (attention_impl == AttentionImpl::kFlashTransposedQsBF16 &&
+                !IsInt8<KV_T>()) {
               const int in_tile_idx_mod_2 = in_tile_idx % 2;
               for (int dim = 0; dim < qkv_dim; dim += 2) {
                 const int dim_mod_2 = dim % 2;
@@ -196,16 +263,17 @@ static HWY_INLINE void ComputeQKVTransposedTile(
                            in_tile_idx * 2 + 1] = k_f32[dim + 1];
                 // Pack v's in pairs
                 v_tile_vec[(in_tile_idx - in_tile_idx_mod_2) * qkv_dim +
-                           dim * 2 + in_tile_idx_mod_2] = v_ptr[dim];
+                           dim * 2 + in_tile_idx_mod_2] = v_cache_values[dim];
                 v_tile_vec[(in_tile_idx - in_tile_idx_mod_2) * qkv_dim +
-                           (dim + 1) * 2 + in_tile_idx_mod_2] = v_ptr[dim + 1];
+                           (dim + 1) * 2 + in_tile_idx_mod_2] =
+                    v_cache_values[dim + 1];
               }
 
             } else {
               for (int i = 0; i < qkv_dim; ++i) {
                 k_tile_vec[i * KVCache::kTileSize + in_tile_idx] = k_f32[i];
               }
-              Compress(v_ptr, qkv_dim, tls, tile_packed_span,
+              Compress(v_cache_values, qkv_dim, tls, tile_packed_span,
                        qkv_dim * (KVCache::kTileSize + in_tile_idx));
             }
 
@@ -640,12 +708,21 @@ void TiledAttention(AttentionImpl attention_impl, size_t num_tokens,
   HWY_DASSERT_M((layer_config.heads % layer_config.kv_heads) == 0,
                 "query heads must be a multiple of key-value heads");
   (void)layer_config;  // only used in HWY_DASSERT
+
   if (qbatch.KV(0).cache->compact_kv_cache_ptr.GetType() == Type::kBF16) {
     ComputeQKVTransposedTile<BF16>(num_tokens, layer_idx, layer, attention_impl,
                                    activations, qbatch, flags, env);
-  } else {
+  } else if (qbatch.KV(0).cache->compact_kv_cache_ptr.GetType() == Type::kF32) {
     ComputeQKVTransposedTile<KV_t>(num_tokens, layer_idx, layer, attention_impl,
                                    activations, qbatch, flags, env);
+  } else if (qbatch.KV(0).cache->compact_kv_cache_ptr.GetType() ==
+             Type::kInt8) {
+    ComputeQKVTransposedTile<int8_t>(num_tokens, layer_idx, layer,
+                                     attention_impl, activations, qbatch, flags,
+                                     env);
+  } else {
+    HWY_ABORT("Unsupported KV cache type: %d",
+              qbatch.KV(0).cache->compact_kv_cache_ptr.GetType());
   }
   RMSNormAndPositionalEncoding(num_tokens, qbatch, activations.q,
                                layer.query_norm_scale, layer_idx, activations,

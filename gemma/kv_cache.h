@@ -31,6 +31,7 @@
 namespace gcpp {
 
 using KV_t = BF16;
+using KV_microscale_t = BF16;
 struct KVCache;
 
 // A non-owning view of a KVCache.
