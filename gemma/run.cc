@@ -99,6 +99,8 @@ void ReplGemma(const GemmaArgs& args, const Gemma& gemma, KVCache& kv_cache,
   size_t prompt_size = 0;
   const ModelConfig& config = gemma.Config();
 
+  TimingInfo timing_info = {.verbosity = inference.verbosity};
+
   const bool have_image = !inference.image_file.path.empty();
   Image image;
   const size_t pool_dim = config.vit_config.pool_dim;
@@ -117,15 +119,8 @@ void ReplGemma(const GemmaArgs& args, const Gemma& gemma, KVCache& kv_cache,
     image.Resize(image_size, image_size);
     RuntimeConfig runtime_config = {.verbosity = verbosity,
                                     .use_spinning = args.threading.spin};
-    double image_tokens_start = hwy::platform::Now();
     gemma.GenerateImageTokens(runtime_config, kv_cache.SeqLen(), image,
-                              image_tokens, env);
-    if (verbosity >= 1) {
-      double image_tokens_duration = hwy::platform::Now() - image_tokens_start;
-      fprintf(stderr,
-              "\n\n[ Timing info ] Image token generation took: %d ms\n",
-              static_cast<int>(image_tokens_duration * 1000));
-    }
+                              image_tokens, env, timing_info);
   }
 
   // callback function invoked for each generated token.
@@ -188,7 +183,6 @@ void ReplGemma(const GemmaArgs& args, const Gemma& gemma, KVCache& kv_cache,
     }
 
     // Set up runtime config.
-    TimingInfo timing_info = {.verbosity = inference.verbosity};
     RuntimeConfig runtime_config = {.verbosity = inference.verbosity,
                                     .batch_stream_token = batch_stream_token,
                                     .use_spinning = args.threading.spin};

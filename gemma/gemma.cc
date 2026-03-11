@@ -605,6 +605,9 @@ static void GenerateT(const ModelConfig& config,
       config, runtime_config, weights, activations, qbatch, env, timing_info);
   // No-op if the profiler is disabled, but useful to separate prefill and
   // generate phases for profiling.
+  if constexpr (PROFILER_ENABLED) {
+    fprintf(stderr, "\n");
+  }
   env.ctx.profiler.PrintResults();
 
   hwy::BitSet4096<> non_eos;  // indexed by qi
@@ -725,25 +728,33 @@ void GenerateBatchT(const ModelConfig& config,
 void GenerateImageTokensT(const ModelConfig& config,
                           const RuntimeConfig& runtime_config, size_t seq_len,
                           const WeightsPtrs& weights, const Image& image,
-                          ImageTokens& image_tokens, MatMulEnv& env) {
-  GCPP_ZONE(env.ctx, hwy::Profiler::GlobalIdx(), Zones::kGenImageTokens);
-  if (config.vit_config.layer_configs.empty()) {
-    HWY_ABORT("Model does not support generating image tokens.");
-  }
-  RuntimeConfig prefill_runtime_config = runtime_config;
+                          ImageTokens& image_tokens, MatMulEnv& env,
+                          TimingInfo& timing_info) {
   const ModelConfig vit_config = GetVitConfig(config);
   const size_t num_tokens = vit_config.max_seq_len;
-  prefill_runtime_config.prefill_tbatch_size =
-      num_tokens / (vit_config.pool_dim * vit_config.pool_dim);
-  Activations prefill_activations(runtime_config, vit_config, num_tokens,
-                                  num_tokens, env.ctx, env.row_ptrs);
-  // Weights are for the full PaliGemma model, not just the ViT part.
-  PrefillVit(config, weights, prefill_runtime_config, image, image_tokens,
-             prefill_activations, env);
+
+  timing_info.NotifyImageTokenStart();
+
+  {
+    GCPP_ZONE(env.ctx, hwy::Profiler::GlobalIdx(), Zones::kGenImageTokens);
+    if (config.vit_config.layer_configs.empty()) {
+      HWY_ABORT("Model does not support generating image tokens.");
+    }
+    RuntimeConfig prefill_runtime_config = runtime_config;
+    prefill_runtime_config.prefill_tbatch_size =
+        num_tokens / (vit_config.pool_dim * vit_config.pool_dim);
+    Activations prefill_activations(runtime_config, vit_config, num_tokens,
+                                    num_tokens, env.ctx, env.row_ptrs);
+    // Weights are for the full PaliGemma model, not just the ViT part.
+    PrefillVit(config, weights, prefill_runtime_config, image, image_tokens,
+               prefill_activations, env);
+  }  // end GCPP_ZONE before we print results.
 
   // No-op if the profiler is disabled. Printing now ensures that the
   // `PrintResults` after prefill does not include the image token part.
   env.ctx.profiler.PrintResults();
+
+  timing_info.NotifyImageTokenDone(num_tokens);
 }
 
 // NOLINTNEXTLINE(google-readability-namespace-comments)
@@ -814,13 +825,13 @@ void Gemma::GenerateBatch(const RuntimeConfig& runtime_config,
 
 void Gemma::GenerateImageTokens(const RuntimeConfig& runtime_config,
                                 size_t seq_len, const Image& image,
-                                ImageTokens& image_tokens,
-                                MatMulEnv& env) const {
+                                ImageTokens& image_tokens, MatMulEnv& env,
+                                TimingInfo& timing_info) const {
   env.ctx.pools.MaybeStartSpinning(runtime_config.use_spinning);
 
   HWY_DYNAMIC_DISPATCH(GenerateImageTokensT)(model_.Config(), runtime_config,
                                              seq_len, weights_, image,
-                                             image_tokens, env);
+                                             image_tokens, env, timing_info);
 
   env.ctx.pools.MaybeStopSpinning(runtime_config.use_spinning);
 }

@@ -65,6 +65,21 @@ class ContinuousQBatch : public QBatch {
 };
 
 struct TimingInfo {
+  void NotifyImageTokenStart() { image_tokens_start = hwy::platform::Now(); }
+
+  void NotifyImageTokenDone(size_t tokens) {
+    image_tokens_duration = hwy::platform::Now() - image_tokens_start;
+    image_tokens = tokens;
+
+    if (verbosity >= 1) {
+      fprintf(stderr,
+              "\n\n[ Timing info ] Image token generation took: %d ms (%.1f "
+              "tok/sec)\n",
+              static_cast<int>(image_tokens_duration * 1E3),
+              image_tokens / image_tokens_duration);
+    }
+  }
+
   // be sure to populate prefill_start before calling NotifyPrefill.
   void NotifyPrefill(size_t tokens) {
     prefill_duration = hwy::platform::Now() - prefill_start;
@@ -87,8 +102,8 @@ struct TimingInfo {
         fprintf(stderr,
                 "\n\n[ Timing info ] Prefill: %d ms for %zu prompt tokens "
                 "(%.2f tokens / sec); Time to first token: %d ms\n",
-                static_cast<int>(prefill_duration * 1000), prefill_tokens,
-                prefill_tok_sec, static_cast<int>(time_to_first_token * 1000));
+                static_cast<int>(prefill_duration * 1E3), prefill_tokens,
+                prefill_tok_sec, static_cast<int>(time_to_first_token * 1E3));
       }
     }
     if (HWY_UNLIKELY(verbosity >= 2 && tokens_generated % 1024 == 0)) {
@@ -110,20 +125,27 @@ struct TimingInfo {
       fprintf(stderr,
               "\n[ Timing info ] Generate: %d ms for %zu tokens (%.2f tokens / "
               "sec)\n",
-              static_cast<int>(generate_duration * 1000), tokens_generated,
+              static_cast<int>(generate_duration * 1E3), tokens_generated,
               gen_tok_sec);
     }
   }
 
-  int verbosity = 0;
-  double prefill_start = 0;
-  double generate_start = 0;
-  double prefill_duration = 0;
+  double image_tokens_start = 0.0;
+  double image_tokens_duration = 0.0;
+  size_t image_tokens = 0;
+
+  double prefill_start = 0.0;
+  double prefill_duration = 0.0;
   size_t prefill_tokens = 0;
-  double time_to_first_token = 0;
-  double generate_duration = 0;
+
+  double generate_start = 0.0;
+  double generate_duration = 0.0;
   size_t tokens_generated = 0;
+
+  double time_to_first_token = 0.0;
   size_t generation_steps = 0;
+
+  int verbosity = 0;
 };
 
 // After construction, all methods are const and thread-compatible if using
@@ -173,7 +195,7 @@ class Gemma {
   // Generates the image tokens by running the image encoder ViT.
   void GenerateImageTokens(const RuntimeConfig& runtime_config, size_t seq_len,
                            const Image& image, ImageTokens& image_tokens,
-                           MatMulEnv& env) const;
+                           MatMulEnv& env, TimingInfo& timing_info) const;
 
  private:
   BlobReader reader_;

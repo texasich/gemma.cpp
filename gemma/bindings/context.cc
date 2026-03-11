@@ -29,7 +29,6 @@
 #include "util/threading.h"
 #include "util/threading_context.h"
 #include "hwy/profiler.h"
-#include "hwy/timer.h"
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -195,17 +194,10 @@ int GemmaContext::GenerateInternal(const char* prompt_string,
 
     // Use the existing runtime_config defined earlier in the function.
     // RuntimeConfig runtime_config = { ... }; // This was already defined
-    double image_tokens_start = hwy::platform::Now();
     // Pass the populated image object to GenerateImageTokens
     model.GenerateImageTokens(runtime_config,
                               active_conversation->kv_cache->SeqLen(), image,
-                              image_tokens, matmul_env);
-    double image_tokens_duration = hwy::platform::Now() - image_tokens_start;
-
-    ss.str("");
-    ss << "\n\n[ Timing info ] Image token generation took: ";
-    ss << static_cast<int>(image_tokens_duration * 1000) << " ms\n",
-        LogDebug(ss.str().c_str());
+                              image_tokens, matmul_env, timing_info);
 
     prompt = WrapAndTokenize(
         model.Tokenizer(), model.ChatTemplate(), model_config.wrapping,

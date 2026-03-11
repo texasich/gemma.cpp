@@ -183,7 +183,8 @@ class GemmaModel {
         env_.MutableEnv().ctx.allocator, gcpp::MatPadding::kOdd));
     gcpp::RuntimeConfig runtime_config = {.verbosity = 0};
     gemma.GenerateImageTokens(runtime_config, env_.MutableKVCache().SeqLen(),
-                              c_image, *image_tokens_, env_.MutableEnv());
+                              c_image, *image_tokens_, env_.MutableEnv(),
+                              timing_info_);
   }
 
   // Generates a response to the given prompt, using the last set image.
@@ -244,6 +245,7 @@ class GemmaModel {
  private:
   gcpp::GemmaEnv env_;
   std::unique_ptr<gcpp::ImageTokens> image_tokens_;
+  gcpp::TimingInfo timing_info_;
   float last_prob_;
 };
 
