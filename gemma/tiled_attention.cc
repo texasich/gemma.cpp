@@ -249,8 +249,7 @@ static HWY_INLINE void ComputeQKVTransposedTile(
               v_cache_values = v_buf;
             }
 
-            if (attention_impl == AttentionImpl::kFlashTransposedQsBF16 &&
-                !IsInt8<KV_T>()) {
+            if (attention_impl == AttentionImpl::kFlashTransposedQsBF16) {
               const int in_tile_idx_mod_2 = in_tile_idx % 2;
               for (int dim = 0; dim < qkv_dim; dim += 2) {
                 const int dim_mod_2 = dim % 2;

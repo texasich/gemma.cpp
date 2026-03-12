@@ -472,7 +472,7 @@ struct CompressTraits<int8_t> {
         const auto vi32_1 = hn::NearestInt(v1);
         const auto vi16 = hn::OrderedDemote2To(di16, vi32_0, vi32_1);
         const auto vi8 = hn::OrderedDemote2To(
-            di8_16, hn::UpperHalf(di16_16, vi16), hn::LowerHalf(di16_16, vi16));
+            di8_16, hn::LowerHalf(di16_16, vi16), hn::UpperHalf(di16_16, vi16));
         hn::StoreU(vi8, di8_16, packed.ptr + packed_ofs + i);
       }
     }
@@ -487,7 +487,7 @@ struct CompressTraits<int8_t> {
       const auto vi32_1 = hn::NearestInt(v1);
       const auto vi16 = hn::OrderedDemote2To(di16, vi32_0, vi32_1);
       const auto vi8 = hn::OrderedDemote2To(
-          di8_16, hn::UpperHalf(di16_16, vi16), hn::LowerHalf(di16_16, vi16));
+          di8_16, hn::LowerHalf(di16_16, vi16), hn::UpperHalf(di16_16, vi16));
       hn::StoreN(vi8, di8_16, packed.ptr + packed_ofs + i, remaining);
     }
   }
