@@ -122,12 +122,11 @@ QueryResultAndMetrics GemmaEnv::BatchQueryModelWithMetrics(
     return true;
   };
   runtime_config_.batch_stream_token = batch_stream_token;
-  if (runtime_config_.verbosity >= 2) {
-    fprintf(stderr, "Max gen: %zu temp: %f tbatch: %zu qbatch: %zu\n",
-            runtime_config_.max_generated_tokens, runtime_config_.temperature,
-            runtime_config_.prefill_tbatch_size,
-            runtime_config_.decode_qbatch_size);
-  }
+  MaybePrint(runtime_config_.verbosity,
+             "Max gen: %zu temp: %f tbatch: %zu qbatch: %zu\n",
+             runtime_config_.max_generated_tokens, runtime_config_.temperature,
+             runtime_config_.prefill_tbatch_size,
+             runtime_config_.decode_qbatch_size);
 
   // Ensure we have at least one KVCache per query.
   while (kv_caches_.size() < num_queries) {
@@ -223,8 +222,6 @@ static constexpr const char* CompiledConfig() {
     return "tsan";
   } else if constexpr (HWY_IS_HWASAN) {
     return "hwasan";
-  } else if constexpr (HWY_IS_UBSAN) {
-    return "ubsan";
   } else if constexpr (HWY_IS_DEBUG_BUILD) {
     return "dbg";
   } else {
@@ -245,6 +242,7 @@ void ShowConfig(const GemmaArgs& args, const ModelConfig& config,
           WeightsPtrs::ToString(weight_read_mode));
 
   if (args.inference.verbosity >= 2) {
+    // (fprintf instead of MaybePrint due to local variables)
     time_t now = time(nullptr);
     char* dt = ctime(&now);  // NOLINT
     char cpu100[100] = "unknown";

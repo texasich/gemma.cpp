@@ -81,6 +81,9 @@ static inline intptr_t MaybeTestInitialized(const void* ptr, size_t size) {
 #endif
 }
 
+// If verbosity >= 2, prints the formatted message to stderr.
+void MaybePrint(int verbosity, const char* format, ...);
+
 // Shared between gemma.h and ops-inl.h.
 #pragma pack(push, 1)
 struct TokenAndProb {

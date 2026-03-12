@@ -258,31 +258,32 @@ void Run(const GemmaArgs& args) {
   KVCache kv_cache(gemma.Config(), inference, ctx.allocator);
 
   if (inference.verbosity >= 1) {
-    std::string instructions =
-        "*Usage*\n"
-        "  Enter an instruction and press enter (%C resets conversation, "
-        "%Q quits).\n";
-    const std::string multiturn =
-        inference.multiturn == 0
-            ? std::string(
-                  "  Since multiturn is set to 0, conversation will "
-                  "automatically reset every turn.\n\n")
-            : "\n";
-    const std::string examples =
-        "*Examples*\n"
-        "  - Write an email to grandma thanking her for the cookies.\n"
-        "  - What are some historical attractions to visit around "
-        "Massachusetts?\n"
-        "  - Compute the nth fibonacci number in javascript.\n"
-        "  - Write a standup comedy bit about GPU programming.\n";
-    instructions += multiturn;
-    instructions += examples;
+    ShowConfig(args, gemma.Config(), gemma.WeightReadMode(), ctx);
 
     // Skip the banner and instructions in non-interactive mode
     if (inference.IsInteractive()) {
+      std::string instructions =
+          "*Usage*\n"
+          "  Enter an instruction and press enter (%C resets conversation, "
+          "%Q quits).\n";
+      const std::string multiturn =
+          inference.multiturn == 0
+              ? std::string(
+                    "  Since multiturn is set to 0, conversation will "
+                    "automatically reset every turn.\n\n")
+              : "\n";
+      const std::string examples =
+          "*Examples*\n"
+          "  - Write an email to grandma thanking her for the cookies.\n"
+          "  - What are some historical attractions to visit around "
+          "Massachusetts?\n"
+          "  - Compute the nth fibonacci number in javascript.\n"
+          "  - Write a standup comedy bit about GPU programming.\n";
+      instructions += multiturn;
+      instructions += examples;
+
       std::cout << "\033[2J\033[1;1H"  // clear screen
                 << kAsciiArtBanner << "\n\n";
-      ShowConfig(args, gemma.Config(), gemma.WeightReadMode(), ctx);
       std::cout << "\n" << instructions << "\n";
     }
   }
@@ -317,14 +318,6 @@ int main(int argc, char** argv) {
     verbosity = args.inference.verbosity;
     gcpp::Run(args);
   }
-  if (verbosity >= 2) {
-    fflush(stdout);
-    fprintf(stderr, "\n[ BEGIN PHASE: final_stats ]\n");
-  }
   PROFILER_PRINT_RESULTS();  // Must call outside the zone above.
-  if (verbosity >= 2) {
-    fflush(stdout);
-    fprintf(stderr, "\n[ END PHASE: final_stats ]\n");
-  }
   return 0;
 }

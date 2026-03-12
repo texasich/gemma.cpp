@@ -15,14 +15,26 @@
 
 #include "util/basics.h"
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "hwy/contrib/sort/vqsort.h"
 #include "hwy/highway.h"
 #include "hwy/timer.h"
 
 namespace gcpp {
+
+void MaybePrint(int verbosity, const char* format, ...) {
+  char buf[800];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(buf, sizeof(buf), format, args);
+  va_end(args);
+
+  fprintf(stderr, "%s\n", buf);  // \n ensures flush.
+}
 
 AesCtrEngine::AesCtrEngine(bool deterministic) {
   // Pi-based nothing up my sleeve numbers from Randen.
