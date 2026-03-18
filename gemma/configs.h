@@ -83,6 +83,17 @@ static inline bool EnumValid(LayerAttentionType type) {
   return type == LayerAttentionType::kGemma || type == LayerAttentionType::kVit;
 }
 
+// Values stated explicitly to allow for semantic reordering
+enum class KVEncoding {
+  kUnspecified = 0,
+  kF32 = 1,
+  kBF16 = 2,
+  kF32TwoTranspositions = 3,
+  kBF16TwoTranspositions = 4,
+  kInt8 = 5,
+  kInt8TwoTranspositions = 6,
+};
+
 enum class AttentionImpl {
   kOld,    // Previous Attention implementation
   kFlash,  // Flash Attention (default)

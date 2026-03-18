@@ -543,6 +543,31 @@ cc_test(
 )
 
 cc_library(
+    name = "kv_transcoding",
+    srcs = ["gemma/kv_transcoding.cc"],
+    hdrs = ["gemma/kv_transcoding.h"],
+    deps = [
+        ":activations",
+        ":basics",
+        ":configs",
+        ":kv_cache",
+        "//compression:types",
+        "@highway//:hwy",
+    ],
+)
+
+cc_test(
+    name = "kv_transcoding_test",
+    srcs = ["gemma/kv_transcoding_test.cc"],
+    deps = [
+        ":configs",
+        ":kv_transcoding",
+        "//testing/base/public:gunit_main",
+        "@highway//:hwy",
+    ],
+)
+
+cc_library(
     name = "activations",
     hdrs = ["gemma/activations.h"],
     deps = [
