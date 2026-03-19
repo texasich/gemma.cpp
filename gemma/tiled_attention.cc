@@ -720,8 +720,9 @@ void TiledAttention(AttentionImpl attention_impl, size_t num_tokens,
                                      attention_impl, activations, qbatch, flags,
                                      env);
   } else {
-    HWY_ABORT("Unsupported KV cache type: %d",
-              qbatch.KV(0).cache->compact_kv_cache_ptr.GetType());
+    HWY_ABORT(
+        "Unsupported KV cache type: %d",
+        static_cast<int>(qbatch.KV(0).cache->compact_kv_cache_ptr.GetType()));
   }
   RMSNormAndPositionalEncoding(num_tokens, qbatch, activations.q,
                                layer.query_norm_scale, layer_idx, activations,
