@@ -26,7 +26,8 @@
 
 namespace gcpp {
 
-void MaybePrint(int verbosity, const char* format, ...) {
+void MaybePrint(int min_verbosity, int verbosity, const char* format, ...) {
+  if (verbosity < min_verbosity) return;
   char buf[800];
   va_list args;
   va_start(args, format);

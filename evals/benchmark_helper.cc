@@ -122,7 +122,7 @@ QueryResultAndMetrics GemmaEnv::BatchQueryModelWithMetrics(
     return true;
   };
   runtime_config_.batch_stream_token = batch_stream_token;
-  MaybePrint(runtime_config_.verbosity,
+  MaybePrint(2, runtime_config_.verbosity,
              "Max gen: %zu temp: %f tbatch: %zu qbatch: %zu\n",
              runtime_config_.max_generated_tokens, runtime_config_.temperature,
              runtime_config_.prefill_tbatch_size,
