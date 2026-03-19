@@ -42,8 +42,9 @@ namespace gcpp {
 #define HWY_DISABLED_TARGETS (HWY_SCALAR | HWY_ALL_NEON)
 #elif HWY_ARCH_ARM_A64
 // We do not yet use AES (e.g. for random generation), hence NEON is the same
-// as NEON_WITHOUT_AES. Also skip SVE because SVE2_128 and SVE_256 cover most.
-#define GEMMA_DISABLED_TARGETS (HWY_SCALAR | HWY_NEON | HWY_SVE)
+// as NEON_WITHOUT_AES. Also skip SVE except SVE2_128 due to compiler bugs.
+#define GEMMA_DISABLED_TARGETS \
+  (HWY_SCALAR | HWY_NEON | HWY_SVE | HWY_SVE2 | HWY_SVE_256)
 #elif HWY_ARCH_X86
 // Skip anything older than Haswell (2013); use Zen4/SPR for recent CPUs.
 // Although we do not use SPR's F16, Zen4 is only enabled for AMD. We do not
