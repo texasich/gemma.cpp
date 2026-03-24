@@ -141,6 +141,7 @@ cc_test(
         ":gemma_args",
         ":gemma_lib",
         ":kv_cache",
+        ":kv_transcoding",
         ":mat",
         ":matmul",
         ":test_util",
@@ -151,6 +152,7 @@ cc_test(
         "//compression:types",
         "@highway//:hwy",
         "@highway//:hwy_test_util",
+        "@highway//:nanobenchmark",
     ],
 )
 

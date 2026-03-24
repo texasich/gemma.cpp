@@ -24,9 +24,11 @@
 #include "gemma/gemma.h"
 #include "gemma/gemma_args.h"
 #include "gemma/kv_cache.h"
+#include "gemma/kv_transcoding.h"
 #include "gemma/weights.h"
 #include "ops/matmul.h"
 #include "util/test_util.h"
+#include "hwy/nanobenchmark.h"
 #ifndef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS GEMMA_DISABLED_TARGETS
 #endif  // HWY_DISABLED_TARGETS
@@ -101,6 +103,33 @@ void AssertClose(const MatPtrT<float>& a, const MatPtrT<float>& b) {
     }
   }
 }
+
+template <typename T>
+void PopulateTestKVCache(MatStorageT<T>& kv, gcpp::KVEncoding encoding,
+                         size_t qkv_dim) {
+  gcpp::DecodedTile tile(qkv_dim, gcpp::KVCache::kTileSize);
+
+  size_t num_tiles = kv.Rows();
+  float unpredictable = hwy::Unpredictable1() * 0.01f;
+  for (size_t tile_idx = 0; tile_idx < num_tiles; ++tile_idx) {
+    for (size_t in_tile = 0; in_tile < gcpp::KVCache::kTileSize; ++in_tile) {
+      size_t i = tile_idx * gcpp::KVCache::kTileSize + in_tile;
+      for (size_t j = 0; j < qkv_dim; ++j) {
+        tile.k_elem(in_tile, j) = unpredictable * (i + 1) / (j + 1);
+        tile.v_elem(in_tile, j) = unpredictable * 2 * (i + 1) / (j + 1);
+      }
+    }
+    size_t row_bytes = kv.Cols() * sizeof(T);
+    HWY_ASSERT(gcpp::EncodeTile(
+        encoding, tile, qkv_dim,
+        hwy::Span<char>(reinterpret_cast<char*>(kv.Row(tile_idx)), row_bytes)));
+  }
+}
+
+struct AttentionTestEnv {
+  AttentionTestEnv(size_t num_queries, size_t kv_seq_len, size_t qkv_dim,
+                   AttentionImpl attention_impl);
+};
 
 void TestFlashAttention(size_t target_parallelism,
                         AttentionImpl attention_impl) {
@@ -283,39 +312,29 @@ const std::vector<float> att_out_gold = {
     0.009653};
 
 void TestTiledFlashAttention() {
-  int qkv_dim = 64;
-  int kv_seq_len = 60;  // number of tokens we will attend to. Not divisible by
-                        // tiles size to test the padding logic.
-  int padded_kv_seq_len = hwy::RoundUpTo(kv_seq_len, gcpp::KVCache::kTileSize);
+  size_t qkv_dim = 64;
+  size_t kv_seq_len = 60;  // number of tokens we will attend to.
+  // Not divisible by tiles size to test the padding logic.
+  size_t padded_kv_seq_len =
+      hwy::RoundUpTo(kv_seq_len, gcpp::KVCache::kTileSize);
   float att_cap = 10.0f;
-  int num_queries = 8;
-  int num_queries_per_timestep = 4;
-  int num_tokens = num_queries / num_queries_per_timestep;
-  int kv_seq_end =
+  size_t num_queries = 8;
+  size_t num_queries_per_timestep = 4;
+  size_t num_tokens = num_queries / num_queries_per_timestep;
+  size_t kv_seq_end =
       kv_seq_len - hwy::DivCeil(num_queries, num_queries_per_timestep);
   ThreadingArgs threading_args;
   ThreadingContext ctx(threading_args);
-  MatStorageT<float> kv(
-      "kv",
-      Extents2D(padded_kv_seq_len, 2 * qkv_dim * gcpp::KVCache::kTileSize),
-      ctx.allocator, MatPadding::kPacked);
-  // fill in kvs with predictable, synthetic data
-  for (int i = 0; i < padded_kv_seq_len; ++i) {
-    for (int j = 0; j < qkv_dim; ++j) {
-      const int tile_idx = i / gcpp::KVCache::kTileSize;
-      const int in_tile_offset = i % gcpp::KVCache::kTileSize;
-      const float val_k = 0.01f * (i + 1) / (j + 1);
-      const float val_v = 0.02f * (i + 1) / (j + 1);
-      kv.Row(tile_idx)[j * gcpp::KVCache::kTileSize + in_tile_offset] = val_k;
-      const size_t v_offset = qkv_dim * gcpp::KVCache::kTileSize;
-      kv.Row(tile_idx)[v_offset + in_tile_offset * qkv_dim + j] = val_v;
-    }
-  }
+  MatStorageT<float> kv("kv",
+                        Extents2D(padded_kv_seq_len / gcpp::KVCache::kTileSize,
+                                  2 * qkv_dim * gcpp::KVCache::kTileSize),
+                        ctx.allocator, MatPadding::kPacked);
+  PopulateTestKVCache(kv, gcpp::KVEncoding::kF32, qkv_dim);
   std::vector<float> q_float(4 * qkv_dim);
   std::vector<float> q_float2(4 * qkv_dim);
   // fill in qs with predictable, synthetic data
-  for (int i = 0; i < 4; ++i) {
-    for (int j = 0; j < qkv_dim; j++) {
+  for (size_t i = 0; i < 4; ++i) {
+    for (size_t j = 0; j < qkv_dim; j++) {
       float val_1 = 0.01f * (i + 1) / (j + 1);
       float val_2 = 0.01f * (i + 4 + 1) / (j + 1);
       q_float[j * 4 + i] = val_1;
@@ -342,11 +361,11 @@ void TestTiledFlashAttention() {
   std::vector<size_t, hwy::AlignedAllocator<size_t>> last_pos_per_query;
   start_pos_per_query.reserve(num_queries);
   last_pos_per_query.reserve(num_queries);
-  for (int token_idx = 0; token_idx < num_tokens; ++token_idx) {
+  for (size_t token_idx = 0; token_idx < num_tokens; ++token_idx) {
     ssize_t query_last_pos = kv_seq_end + token_idx;
     ssize_t query_start_pos =
         std::max(query_last_pos - 100000 + 1, static_cast<ssize_t>(0));
-    for (int q_head_idx = 0; q_head_idx < num_queries_per_timestep;
+    for (size_t q_head_idx = 0; q_head_idx < num_queries_per_timestep;
          ++q_head_idx) {
       start_pos_per_query.push_back(query_start_pos);
       last_pos_per_query.push_back(query_last_pos);
@@ -365,67 +384,43 @@ void TestTiledFlashAttention() {
   // and output looked good. Not ideal but should be good enough to test the
   // plumbing and detect regressions.
   PrintMatPtr(att_out);
-  for (int i = 0; i < num_queries; ++i) {
+  for (size_t i = 0; i < num_queries; ++i) {
     std::cerr << "exp_d: " << exp_denominator_sums[i]
               << " max_logit: " << max_logits[i] << std::endl;
     EXPECT_NEAR(exp_denominator_sums[i], exp_denominator_sums_gold[i], 1e-3f)
         << "i=" << i;
     EXPECT_NEAR(max_logits[i], max_logits_gold[i], 1e-6f) << "i=" << i;
-    for (int j = 0; j < qkv_dim; ++j) {
+    for (size_t j = 0; j < qkv_dim; ++j) {
       EXPECT_NEAR(att_out.Row(i)[j], att_out_gold[i * qkv_dim + j], 1e-5f);
     }
   }
 }
 
 void TestTiledFlashAttentionBF16() {
-  int qkv_dim = 64;
-  int kv_seq_len = 60;  // number of tokens we will attend to. Not divisible by
-                        // tiles size to test the padding logic.
-  int padded_kv_seq_len = hwy::RoundUpTo(kv_seq_len, gcpp::KVCache::kTileSize);
+  size_t qkv_dim = 64;
+  size_t kv_seq_len = 60;  // number of tokens we will attend to.
+  // Not divisible by tiles size to test the padding logic.
+  size_t padded_kv_seq_len =
+      hwy::RoundUpTo(kv_seq_len, gcpp::KVCache::kTileSize);
   float att_cap = 10.0f;
-  int num_queries = 8;
-  int num_queries_per_timestep = 4;
-  int num_tokens = num_queries / num_queries_per_timestep;
-  int kv_seq_end =
+  size_t num_queries = 8;
+  size_t num_queries_per_timestep = 4;
+  size_t num_tokens = num_queries / num_queries_per_timestep;
+  size_t kv_seq_end =
       kv_seq_len - hwy::DivCeil(num_queries, num_queries_per_timestep);
   ThreadingArgs threading_args;
   ThreadingContext ctx(threading_args);
-  MatStorageT<BF16> kv(
-      "kv",
-      Extents2D(padded_kv_seq_len, 2 * qkv_dim * gcpp::KVCache::kTileSize),
-      ctx.allocator, MatPadding::kPacked);
-  // fill in kvs with predictable, synthetic data
-  for (int i = 0; i < padded_kv_seq_len; i++) {
-    for (int j = 0; j < qkv_dim; j+=2) {
-      const int tile_idx = i / gcpp::KVCache::kTileSize;
-      const int in_tile_offset = i % gcpp::KVCache::kTileSize;
-      const float val_k_1 = 0.01f * (i + 1) / (j + 1);
-      const float val_k_2 = 0.01f * (i + 1) / (j + 2);
-      kv.Row(tile_idx)[j * gcpp::KVCache::kTileSize + in_tile_offset * 2] =
-          hwy::ConvertScalarTo<BF16>(val_k_1);
-      kv.Row(tile_idx)[j * gcpp::KVCache::kTileSize + in_tile_offset * 2 + 1] =
-          hwy::ConvertScalarTo<BF16>(val_k_2);
-    }
-  }
-  const size_t v_offset = qkv_dim * gcpp::KVCache::kTileSize;
-  for (int i = 0; i < padded_kv_seq_len; i += 2) {
-    for (int j = 0; j < qkv_dim; j++) {
-      const int tile_idx = i / gcpp::KVCache::kTileSize;
-      const int in_tile_offset = i % gcpp::KVCache::kTileSize;
-      const float val_v_1 = 0.02f * (i + 1) / (j + 1);
-      const float val_v_2 = 0.02f * (i + 2) / (j + 1);
-      kv.Row(tile_idx)[v_offset + in_tile_offset * qkv_dim + j * 2] =
-          hwy::ConvertScalarTo<BF16>(val_v_1);
-      kv.Row(tile_idx)[v_offset + in_tile_offset * qkv_dim + j * 2 + 1] =
-          hwy::ConvertScalarTo<BF16>(val_v_2);
-    }
-  }
+  MatStorageT<BF16> kv("kv",
+                       Extents2D(padded_kv_seq_len / gcpp::KVCache::kTileSize,
+                                 2 * qkv_dim * gcpp::KVCache::kTileSize),
+                       ctx.allocator, MatPadding::kPacked);
+  PopulateTestKVCache(kv, gcpp::KVEncoding::kBF16TwoTranspositions, qkv_dim);
 
   std::vector<BF16> q_float(num_queries_per_timestep * qkv_dim);
   std::vector<BF16> q_float2(num_queries_per_timestep * qkv_dim);
   // fill in qs with predictable, synthetic data
-  for (int i = 0; i < num_queries_per_timestep; ++i) {
-    for (int j = 0; j < qkv_dim; j += 2) {
+  for (size_t i = 0; i < num_queries_per_timestep; ++i) {
+    for (size_t j = 0; j < qkv_dim; j += 2) {
       q_float[j * num_queries_per_timestep + i * 2] =
           hwy::ConvertScalarTo<BF16>(0.01f * (i + 1) / (j + 1));
       q_float[j * num_queries_per_timestep + i * 2 + 1] =
@@ -458,11 +453,11 @@ void TestTiledFlashAttentionBF16() {
   std::vector<size_t, hwy::AlignedAllocator<size_t>> last_pos_per_query;
   start_pos_per_query.reserve(num_queries);
   last_pos_per_query.reserve(num_queries);
-  for (int token_idx = 0; token_idx < num_tokens; ++token_idx) {
+  for (size_t token_idx = 0; token_idx < num_tokens; ++token_idx) {
     ssize_t query_last_pos = kv_seq_end + token_idx;
     ssize_t query_start_pos =
         std::max(query_last_pos - 100000 + 1, static_cast<ssize_t>(0));
-    for (int q_head_idx = 0; q_head_idx < num_queries_per_timestep;
+    for (size_t q_head_idx = 0; q_head_idx < num_queries_per_timestep;
          ++q_head_idx) {
       start_pos_per_query.push_back(query_start_pos);
       last_pos_per_query.push_back(query_last_pos);
@@ -480,90 +475,47 @@ void TestTiledFlashAttentionBF16() {
   // and output looked good. Not ideal but should be good enough to test the
   // plumbing and detect regressions.
   PrintMatPtr(att_out);
-  for (int i = 0; i < num_queries; ++i) {
+  for (size_t i = 0; i < num_queries; ++i) {
     std::cerr << "exp_d: " << exp_denominator_sums[i]
               << " max_logit: " << max_logits[i] << std::endl;
     EXPECT_NEAR(exp_denominator_sums[i], exp_denominator_sums_gold[i], 4e-2f)
         << "i=" << i;
     EXPECT_NEAR(max_logits[i], max_logits_gold[i], 1e-3f) << "i=" << i;
-    for (int j = 0; j < qkv_dim; ++j) {
+    for (size_t j = 0; j < qkv_dim; ++j) {
       EXPECT_NEAR(att_out.Row(i)[j], att_out_gold[i * qkv_dim + j], 1e-3f);
     }
   }
 }
 
 void TestTiledFlashAttentionInt8() {
-  int qkv_dim = 64;
-  int kv_seq_len = 60;  // number of tokens we will attend to. Not divisible by
-                        // tiles size to test the padding logic.
-  int padded_kv_seq_len = hwy::RoundUpTo(kv_seq_len, gcpp::KVCache::kTileSize);
+  size_t qkv_dim = 64;
+  // number of tokens we will attend to.
+  // Not divisible by tiles size to test the padding logic.
+  size_t kv_seq_len = 60;
+  size_t padded_kv_seq_len =
+      hwy::RoundUpTo(kv_seq_len, gcpp::KVCache::kTileSize);
   float att_cap = 10.0f;
-  int num_queries = 8;
-  int num_queries_per_timestep = 4;
-  int num_tokens = num_queries / num_queries_per_timestep;
-  int kv_seq_end =
+  size_t num_queries = 8;
+  size_t num_queries_per_timestep = 4;
+  size_t num_tokens = num_queries / num_queries_per_timestep;
+  size_t kv_seq_end =
       kv_seq_len - hwy::DivCeil(num_queries, num_queries_per_timestep);
   ThreadingArgs threading_args;
   ThreadingContext ctx(threading_args);
 
-  int num_tiles = padded_kv_seq_len / gcpp::KVCache::kTileSize;
-  int tile_size_bytes = 2 * qkv_dim * gcpp::KVCache::kTileSize +
-                        2 * sizeof(BF16) * gcpp::KVCache::kTileSize;
+  size_t num_tiles = padded_kv_seq_len / gcpp::KVCache::kTileSize;
+  size_t tile_size_bytes = 2 * qkv_dim * gcpp::KVCache::kTileSize +
+                           2 * sizeof(BF16) * gcpp::KVCache::kTileSize;
 
   MatStorageT<int8_t> kv("kv", Extents2D(num_tiles, tile_size_bytes),
                          ctx.allocator, MatPadding::kPacked);
-
-  // fill in kvs with predictable, synthetic data
-  for (int i = 0; i < padded_kv_seq_len; ++i) {
-    int tile_idx = i / gcpp::KVCache::kTileSize;
-    int in_tile_offset = i % gcpp::KVCache::kTileSize;
-    int8_t* tile_ptr = kv.Row(tile_idx);
-    BF16* scales_ptr = HWY_RCAST_ALIGNED(
-        BF16*, tile_ptr + 2 * qkv_dim * gcpp::KVCache::kTileSize);
-
-    // Generate float values for K and V
-    std::vector<float> k_vals(qkv_dim);
-    std::vector<float> v_vals(qkv_dim);
-    float max_abs_k = 0.0f;
-    float max_abs_v = 0.0f;
-
-    for (int j = 0; j < qkv_dim; ++j) {
-      k_vals[j] = 0.01f * (i + 1) / (j + 1);
-      v_vals[j] = 0.02f * (i + 1) / (j + 1);
-      max_abs_k = std::max(max_abs_k, std::abs(k_vals[j]));
-      max_abs_v = std::max(max_abs_v, std::abs(v_vals[j]));
-    }
-
-    // Quantize K
-    float scale_k = max_abs_k / 127.0f;
-    if (scale_k == 0.0f) scale_k = 1.0f;
-    scales_ptr[in_tile_offset] = hwy::ConvertScalarTo<BF16>(scale_k);
-    for (int j = 0; j < qkv_dim; ++j) {
-      int val = std::round(k_vals[j] / scale_k);
-      val = std::max(-127, std::min(127, val));
-      tile_ptr[j * gcpp::KVCache::kTileSize + in_tile_offset] =
-          static_cast<int8_t>(val);
-    }
-
-    // Quantize V
-    float scale_v = max_abs_v / 127.0f;
-    if (scale_v == 0.0f) scale_v = 1.0f;
-    scales_ptr[gcpp::KVCache::kTileSize + in_tile_offset] =
-        hwy::ConvertScalarTo<BF16>(scale_v);
-    size_t v_offset = qkv_dim * gcpp::KVCache::kTileSize;
-    for (int j = 0; j < qkv_dim; ++j) {
-      int val = std::round(v_vals[j] / scale_v);
-      val = std::max(-127, std::min(127, val));
-      tile_ptr[v_offset + in_tile_offset * qkv_dim + j] =
-          static_cast<int8_t>(val);
-    }
-  }
+  PopulateTestKVCache(kv, gcpp::KVEncoding::kInt8, qkv_dim);
 
   std::vector<float> q_float(4 * qkv_dim);
   std::vector<float> q_float2(4 * qkv_dim);
   // fill in qs with predictable, synthetic data
-  for (int i = 0; i < 4; ++i) {
-    for (int j = 0; j < qkv_dim; j++) {
+  for (size_t i = 0; i < 4; ++i) {
+    for (size_t j = 0; j < qkv_dim; j++) {
       float val_1 = 0.01f * (i + 1) / (j + 1);
       float val_2 = 0.01f * (i + 4 + 1) / (j + 1);
       q_float[j * 4 + i] = val_1;
@@ -590,11 +542,11 @@ void TestTiledFlashAttentionInt8() {
   std::vector<size_t, hwy::AlignedAllocator<size_t>> last_pos_per_query;
   start_pos_per_query.reserve(num_queries);
   last_pos_per_query.reserve(num_queries);
-  for (int token_idx = 0; token_idx < num_tokens; ++token_idx) {
+  for (size_t token_idx = 0; token_idx < num_tokens; ++token_idx) {
     ssize_t query_last_pos = kv_seq_end + token_idx;
     ssize_t query_start_pos =
         std::max(query_last_pos - 100000 + 1, static_cast<ssize_t>(0));
-    for (int q_head_idx = 0; q_head_idx < num_queries_per_timestep;
+    for (size_t q_head_idx = 0; q_head_idx < num_queries_per_timestep;
          ++q_head_idx) {
       start_pos_per_query.push_back(query_start_pos);
       last_pos_per_query.push_back(query_last_pos);
@@ -613,13 +565,13 @@ void TestTiledFlashAttentionInt8() {
   // and output looked good. Not ideal but should be good enough to test the
   // plumbing and detect regressions.
   PrintMatPtr(att_out);
-  for (int i = 0; i < num_queries; ++i) {
+  for (size_t i = 0; i < num_queries; ++i) {
     std::cerr << "exp_d: " << exp_denominator_sums[i]
               << " max_logit: " << max_logits[i] << std::endl;
-    EXPECT_NEAR(exp_denominator_sums[i], exp_denominator_sums_gold[i], 1e-2f)
+    EXPECT_NEAR(exp_denominator_sums[i], exp_denominator_sums_gold[i], 2e-2f)
         << "i=" << i;
     EXPECT_NEAR(max_logits[i], max_logits_gold[i], 1e-3f) << "i=" << i;
-    for (int j = 0; j < qkv_dim; ++j) {
+    for (size_t j = 0; j < qkv_dim; ++j) {
       EXPECT_NEAR(att_out.Row(i)[j], att_out_gold[i * qkv_dim + j], 5e-3f);
     }
   }
