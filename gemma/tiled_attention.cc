@@ -1,9 +1,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <limits>
+#include <optional>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -127,6 +129,10 @@ static HWY_INLINE void ComputeQKVTransposedTile(
   // Apply positional encodings and store K/V in tiled format.
   hwy::Divisor div_kv_heads(kv_heads);
 
+  bool is_transposed_qs =
+      attention_impl == AttentionImpl::kFlashTransposedQsBF16
+      || attention_impl == AttentionImpl::kFlashTransposedQsInt16;
+
   hn::ScalableTag<float> df;
   static hwy::Divisor tile_size_divisor(KVCache::kTileSize);
   ParallelFor(
@@ -249,7 +255,7 @@ static HWY_INLINE void ComputeQKVTransposedTile(
               v_cache_values = v_buf;
             }
 
-            if (attention_impl == AttentionImpl::kFlashTransposedQsBF16) {
+            if (is_transposed_qs) {
               const int in_tile_idx_mod_2 = in_tile_idx % 2;
               for (int dim = 0; dim < qkv_dim; dim += 2) {
                 const int dim_mod_2 = dim % 2;
@@ -280,30 +286,13 @@ static HWY_INLINE void ComputeQKVTransposedTile(
           }
           Compress(k_tile_vec, qkv_dim * KVCache::kTileSize, tls,
                    tile_packed_span, 0);
-          if (attention_impl == AttentionImpl::kFlashTransposedQsBF16) {
+          if (is_transposed_qs) {
             Compress(v_tile_vec, qkv_dim * KVCache::kTileSize, tls,
                      tile_packed_span, qkv_dim * KVCache::kTileSize);
           }
           current_token_idx = token_in_tile_idx;
         }
       });
-}
-
-// TODO: optimize with gathers
-// This format might change in the future, when kernel will be updated to
-// support more than 8 queries.
-// Input (num_queries, qkv_dim)
-// Output (qkv_dim, num_queries)
-void TransposeQ(const MatPtrT<float>& queries,
-                hwy::Span<float> transposed_queries_span) {
-  const size_t qkv_dim = queries.Cols();
-  const size_t num_queries = queries.Rows();
-  HWY_ASSERT(transposed_queries_span.size() == num_queries * qkv_dim);
-  for (size_t i = 0; i < qkv_dim; i++) {
-    for (size_t j = 0; j < num_queries; ++j) {
-      transposed_queries_span[i * num_queries + j] = queries.Row(j)[i];
-    }
-  }
 }
 
 // Transposes queries
@@ -373,6 +362,144 @@ std::pair<AlignedFloatVector, std::vector<float*>> TransposeQueriesToGroupsOf4(
   }
   return std::make_pair(std::move(transposed_queries),
                         std::move(transposed_queries_ptrs));
+}
+
+template <typename OutT>
+static HWY_INLINE void TransposeStridedQueriesBF16orInt16(
+    hwy::Span<const float*> queries, int qkv_dim,
+    hwy::Span<OutT> transposed_queries, hwy::Span<float> q_scales) {
+  namespace hn = hwy::HWY_NAMESPACE;
+  using DF = hn::ScalableTag<float>;
+  const DF df;
+  using VF = hn::Vec<DF>;
+  // doubles to avoid moving between int/float domains when gathering
+  using DF64 = hn::ScalableTag<double>;
+  const DF64 dd64;
+  using DI64 = hn::ScalableTag<int64_t>;
+  const DI64 di64;
+  using VI64 = hn::Vec<DI64>;
+  auto d_out = hn::Rebind<OutT, decltype(df)>();
+  const size_t lanes = hn::Lanes(df);
+  const size_t half_lanes = lanes / 2;
+  const size_t num_queries = queries.size();
+  const size_t num_numbers_to_gather = num_queries * 2;
+  const size_t num_queries_rounded_up = hwy::RoundUpTo(num_queries, half_lanes);
+  const size_t num_scales_rounded_up =
+      hwy::RoundUpTo(num_numbers_to_gather, lanes);
+
+  // We store scales twice so we will be able to just load them without a need
+  // to duplicate for multiplication
+  AlignedFloatVector inverted_q_scales_doubled(num_scales_rounded_up);
+
+  if constexpr (IsInt16<OutT>()) {
+    // compute microscales
+    for (size_t i = 0; i < num_queries; ++i) {
+      float max_abs = AbsMaxOfSpan(hwy::Span<const float>(queries[i], qkv_dim));
+      float scale = max_abs == 0.0f ? 1.0f : 32767.0f / max_abs;
+      inverted_q_scales_doubled[2 * i] = scale;
+      inverted_q_scales_doubled[2 * i + 1] = scale;
+      q_scales[i] = 1.0f / scale;
+    }
+  }
+
+  std::vector<int64_t, hwy::AlignedAllocator<int64_t>> query_offsets(
+      num_queries_rounded_up);
+  for (size_t i = 0; i < num_queries; ++i) {
+    query_offsets[i] = (queries[i] - queries[0]) / 2;
+  }
+  for (size_t i = num_queries; i < num_queries_rounded_up; ++i) {
+    // last offset is the same so gather doesn't read out of bounds
+    query_offsets[i] = query_offsets[num_queries > 0 ? num_queries - 1 : 0];
+  }
+
+  const double* queries_0_double = HWY_RCAST_ALIGNED(const double*, queries[0]);
+
+  // Lambda to handle the scaling and demotion for Int16 types.
+  auto process_values = [&]() HWY_ATTR {
+    if constexpr (IsInt16<OutT>()) {
+      return [&](VF& x, size_t j) HWY_ATTR {
+        VF scales = hn::Load(df, inverted_q_scales_doubled.data() + j * 2);
+        x = hn::Mul(x, scales);
+        return hn::DemoteTo(d_out, hn::NearestInt(x));
+      };
+    } else {
+      return [&](VF& x, size_t j) HWY_ATTR { return hn::DemoteTo(d_out, x); };
+    }
+  }();
+
+  for (size_t i = 0; i < qkv_dim; i += 2) {
+    size_t j = 0;
+    if (num_queries >= half_lanes) {
+      for (; j <= num_queries - half_lanes; j += half_lanes) {
+        const VI64 offsets = hn::LoadU(di64, query_offsets.data() + j);
+        auto x64 = hn::GatherIndex(dd64, queries_0_double + i / 2, offsets);
+        VF x = hn::BitCast(df, x64);
+        if constexpr (IsInt16<OutT>()) {
+          auto demoted = process_values(x, j);
+          hn::Store(demoted, d_out,
+                    transposed_queries.data() + i * num_queries + j * 2);
+        } else if constexpr (IsBF16<OutT>()) {
+          auto demoted = hn::DemoteTo(d_out, x);
+          hn::Store(demoted, d_out,
+                    transposed_queries.data() + i * num_queries + j * 2);
+        } else {
+          static_assert(false, "Unsupported type");
+        }
+      }
+    }
+    if (j < num_queries) {
+      const VI64 offsets = hn::LoadU(di64, query_offsets.data() + j);
+      auto x64 = hn::GatherIndex(dd64, queries_0_double + i / 2, offsets);
+      VF x = hn::BitCast(df, x64);
+      if constexpr (IsInt16<OutT>()) {
+        auto demoted = process_values(x, j);
+        hn::StoreN(demoted, d_out,
+                   transposed_queries.data() + i * num_queries + j * 2,
+                   num_numbers_to_gather - j * 2);
+      } else if constexpr (IsBF16<OutT>()) {
+        auto demoted = hn::DemoteTo(d_out, x);
+        hn::StoreN(demoted, d_out,
+                   transposed_queries.data() + i * num_queries + j * 2,
+                   num_numbers_to_gather - j * 2);
+      } else {
+        static_assert(false, "Unsupported type");
+      }
+    }
+  }
+}
+
+// Transposed queries data, vector of pointers to transposed queries, vector of
+// scales
+template <typename OutT>
+std::tuple<std::vector<OutT, hwy::AlignedAllocator<OutT>>, std::vector<OutT*>,
+           AlignedFloatVector>
+TransposeQueriesToGroupsOfNBF16orInt16(hwy::Span<float*> queries_ptrs,
+                                       int qkv_dim, size_t group_size) {
+  size_t num_queries = queries_ptrs.size();
+  size_t num_groups = hwy::DivCeil(num_queries, group_size);
+  std::vector<OutT, hwy::AlignedAllocator<OutT>> transposed_queries(
+      num_groups * group_size * qkv_dim);
+  std::vector<OutT*> transposed_queries_ptrs;
+  AlignedFloatVector q_scales(num_groups * 4);
+  for (size_t group_idx = 0; group_idx < num_groups; ++group_idx) {
+    size_t current_group_size =
+        std::min(group_size, num_queries - group_idx * group_size);
+    transposed_queries_ptrs.push_back(transposed_queries.data() +
+                                      group_idx * qkv_dim * group_size);
+    TransposeStridedQueriesBF16orInt16(
+        hwy::Span<const float*>(
+            const_cast<const float**>(queries_ptrs.data() +
+                                      group_idx * group_size),
+            current_group_size),
+        qkv_dim,
+        hwy::Span<OutT>(transposed_queries_ptrs.back(),
+                        qkv_dim * current_group_size),
+        hwy::Span<float>(q_scales.data() + group_idx * group_size,
+                         current_group_size));
+  }
+  return std::make_tuple(std::move(transposed_queries),
+                         std::move(transposed_queries_ptrs),
+                         std::move(q_scales));
 }
 
 std::pair<AlignedBF16Vector, std::vector<BF16*>>
@@ -537,9 +664,6 @@ void LocalAttentionForAllHeadsTokensAndBatch(
         hwy::Span<float*> queries_ptrs_span(queries_ptrs.data(),
                                             queries_ptrs.size());
 
-        auto [transposed_queries, transposed_queries_ptrs] =
-            TransposeQueriesToGroupsOf4(queries_ptrs_span, qkv_dim);
-
         MatStorageT<float>& att_out =
             activations.sub_task_att_out->at(task_idx);
         AlignedFloatVector& exp_denominator_sums =
@@ -604,23 +728,37 @@ void LocalAttentionForAllHeadsTokensAndBatch(
             last_pos_per_query.push_back(query_last_context_pos);
           }
         }
+
         if (attention_impl == AttentionImpl::kFlashTransposedQsBF16) {
           // pack transposed queries into BF16
-          hwy::Span<float*> queries_span(transposed_queries_ptrs.data(),
-                                         transposed_queries_ptrs.size());
-          auto [_, transposed_queries_ptrs_bf16] =
-              TransposeTransposedQueriesAndPackIntoBF16(queries_span, qkv_dim,
-                                                        num_queries);
-          hwy::Span<const BF16*> queries_span_bf16(
-              const_cast<const BF16**>(transposed_queries_ptrs_bf16.data()),
-              transposed_queries_ptrs_bf16.size());
+          auto [transposed_queries, transposed_queries_ptrs, _] =
+              TransposeQueriesToGroupsOfNBF16orInt16<BF16>(
+                  queries_ptrs_span, qkv_dim, /*group_size=*/4);
+          hwy::Span<const BF16*> queries_span(
+              const_cast<const BF16**>(transposed_queries_ptrs.data()),
+              transposed_queries_ptrs.size());
           DispatchTileFlashAttentionReturnExpSumsAndMaxLogitsBF16(
-              kv_ptrs, num_queries, queries_span_bf16,
+              kv_ptrs, num_queries, queries_span,
+              hwy::Span<const size_t>(start_pos_per_query),
+              hwy::Span<const size_t>(last_pos_per_query),
+              activations.config.att_cap, att_out, exp_denominator_sums.data(),
+              max_logits.data());
+        } else if (attention_impl == AttentionImpl::kFlashTransposedQsInt16) {
+          auto [transposed_queries, transposed_queries_ptrs, q_scales] =
+              TransposeQueriesToGroupsOfNBF16orInt16<int16_t>(
+                  queries_ptrs_span, qkv_dim, /*group_size=*/4);
+          hwy::Span<const int16_t*> queries_span(
+              const_cast<const int16_t**>(transposed_queries_ptrs.data()),
+              transposed_queries_ptrs.size());
+          DispatchTileFlashAttentionReturnExpSumsAndMaxLogitsInt16(
+              kv_ptrs, num_queries, queries_span, q_scales,
               hwy::Span<const size_t>(start_pos_per_query),
               hwy::Span<const size_t>(last_pos_per_query),
               activations.config.att_cap, att_out, exp_denominator_sums.data(),
               max_logits.data());
         } else {
+          auto [transposed_queries, transposed_queries_ptrs] =
+              TransposeQueriesToGroupsOf4(queries_ptrs_span, qkv_dim);
           DispatchTileFlashAttentionReturnExpSumsAndMaxLogits(
               kv_ptrs, num_queries,
               hwy::Span<const float*>(
@@ -712,8 +850,9 @@ void TiledAttention(AttentionImpl attention_impl, size_t num_tokens,
     ComputeQKVTransposedTile<BF16>(num_tokens, layer_idx, layer, attention_impl,
                                    activations, qbatch, flags, env);
   } else if (qbatch.KV(0).cache->compact_kv_cache_ptr.GetType() == Type::kF32) {
-    ComputeQKVTransposedTile<KV_t>(num_tokens, layer_idx, layer, attention_impl,
-                                   activations, qbatch, flags, env);
+    ComputeQKVTransposedTile<float>(num_tokens, layer_idx, layer,
+                                    attention_impl, activations, qbatch, flags,
+                                    env);
   } else if (qbatch.KV(0).cache->compact_kv_cache_ptr.GetType() ==
              Type::kInt8) {
     ComputeQKVTransposedTile<int8_t>(num_tokens, layer_idx, layer,

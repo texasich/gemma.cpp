@@ -558,57 +558,14 @@ HWY_INLINE float DoubleFlashAttentionRowVector(DF df, size_t start_pos,
   return scale;
 }
 
-// Reduces each of x and stores in following lanes of max (tested with float32)
-template <class DF, typename T = hn::TFromD<DF>,
-          class DF4 = hn::CappedTag<T, 4>, class VF4 = hn::Vec<DF4>,
-          class VF = hn::Vec<DF>, typename F>
-static HWY_INLINE VF4 Reduce4(DF df, VF x_0, VF x_1, VF x_2, VF x_3,
-                              F reducer) {
-  const DF4 df4;
-  constexpr size_t kMaxLanes = hn::MaxLanes(df);
-  HWY_LANES_CONSTEXPR size_t kLanes = hn::Lanes(df);
-  HWY_ALIGN T x_transposed[4 * kMaxLanes];
-  hn::StoreInterleaved4(x_0, x_1, x_2, x_3, df, x_transposed);
-  VF x01 =
-      reducer(hn::Load(df, x_transposed), hn::Load(df, x_transposed + kLanes));
-  VF x23 = reducer(hn::Load(df, x_transposed + 2 * kLanes),
-                   hn::Load(df, x_transposed + 3 * kLanes));
-  VF x0123 = reducer(x01, x23);
-  hn::Store(x0123, df, x_transposed);
-
-  VF4 result = hn::Load(df4, x_transposed);
-  for (int i = 1; i < kLanes / 4; ++i) {
-    result = reducer(result, hn::Load(df4, x_transposed + i * 4));
-  }
-  return result;
-}
-
-// Returns vector with 8 lanes. Shouldn't be on architectures with less than 8
-// lanes per vector.
-template <class DF, typename T = hn::TFromD<DF>,
-          class DF8 = hn::CappedTag<T, 8>, class VF8 = hn::Vec<DF8>,
-          class VF = hn::Vec<DF>, typename F>
-static HWY_INLINE VF8 Reduce8(DF df, VF x_0, VF x_1, VF x_2, VF x_3, VF x_4,
-                              VF x_5, VF x_6, VF x_7, F reducer) {
-  auto res0123 = Reduce4(df, x_0, x_1, x_2, x_3, reducer);
-  auto res4567 = Reduce4(df, x_4, x_5, x_6, x_7, reducer);
-
-  using DF4 = hn::CappedTag<T, 4>;
-  const DF4 df4;
-  const DF8 df8;
-  HWY_ALIGN T buf[8];
-  hn::Store(res0123, df4, buf);
-  hn::Store(res4567, df4, buf + 4);
-  return hn::Load(df8, buf);
-}
-
 // Handles Up to 4 Q rows by NF*2 timesteps of flash attention.
 template <int kNumQueries, class DF, class VF = hn::Vec<DF>>
 static HWY_INLINE void FlashAttentionTileStepAndApplySoftCap4(
     DF df, float att_cap, float one_over_att_cap, VF& x_0_p0, VF& x_0_p1,
     VF& x_1_p0, VF& x_1_p1, VF& x_2_p0, VF& x_2_p1, VF& x_3_p0, VF& x_3_p1,
     float* HWY_RESTRICT old_max, float* HWY_RESTRICT old_d,
-    float* HWY_RESTRICT scales) {
+    float* HWY_RESTRICT scales, float* HWY_RESTRICT q_scales_s = nullptr,
+    float max_v_scale = 1.0f) {
   using DF4 = hn::CappedTag<float, 4>;
   const DF4 df4;
   using VF4 = hn::Vec<DF4>;
@@ -636,6 +593,7 @@ static HWY_INLINE void FlashAttentionTileStepAndApplySoftCap4(
     VF4 one_over_cap = hn::Set(df4, one_over_att_cap);
     new_max = hn::Mul(cap, hn::Tanh(df4, hn::Mul(new_max, one_over_cap)));
   }
+  VF4 local_max = new_max;
   VF4 old_max_vf = hn::Set(df4, kNegInf);
   old_max_vf = hn::LoadU(df4, old_max);
   new_max = hn::Max(new_max, old_max_vf);
@@ -679,8 +637,28 @@ static HWY_INLINE void FlashAttentionTileStepAndApplySoftCap4(
   const VF4 zero4 = hn::Zero(df4);
   const VF4 one_over_d =
       hn::MaskedDivOr(zero4, non_zero_mask, hn::Set(df4, 1.0f), old_d_vf);
+  VF4 q_scale;
+  if (q_scales_s != nullptr) {
+    // max_s = exp(local_max - new_max) / old_d_vf
+    VF4 max_s = hn::Mul(one_over_d, hn::Exp(df4, hn::Sub(local_max, new_max)));
+
+    // Output the unquantize scale directly to array memory:
+    // Because we're capping out at 32767 / max_v_scale, the true scale goes up
+    // proportionately
+    hn::Store(hn::Mul(max_s, hn::Set(df4, max_v_scale / 32767.0f)), df4,
+              q_scales_s);
+
+    // multiplier for x = 32767 * exp(new_max - local_max) / max_v_scale
+    auto max_s_gt_0 = hn::Gt(max_s, zero4);
+    float inv_max_v_scale = 1.0f / std::max(max_v_scale, 1e-10f);
+    VF4 mult = hn::Mul(hn::Set(df4, 32767.0f * inv_max_v_scale),
+                       hn::Exp(df4, hn::Sub(new_max, local_max)));
+    q_scale = hn::IfThenElse(max_s_gt_0, mult, zero4);
+  } else {
+    q_scale = one_over_d;
+  }
   HWY_ALIGN float tmp_one_over_d[4];
-  hn::Store(one_over_d, df4, tmp_one_over_d);
+  hn::Store(q_scale, df4, tmp_one_over_d);
   hn::BlendedStore(old_d_vf, changed_max, df4, old_d);
   scale = hn::Mul(scale, one_over_d);
   hn::BlendedStore(scale, changed_max, df4, scales);
@@ -713,7 +691,8 @@ static HWY_INLINE void FlashAttentionTileStepAndApplySoftCap8(
     VF& x_1_p0, VF& x_1_p1, VF& x_2_p0, VF& x_2_p1, VF& x_3_p0, VF& x_3_p1,
     VF& x_4_p0, VF& x_4_p1, VF& x_5_p0, VF& x_5_p1, VF& x_6_p0, VF& x_6_p1,
     VF& x_7_p0, VF& x_7_p1, float* HWY_RESTRICT old_max,
-    float* HWY_RESTRICT old_d, float* HWY_RESTRICT scales) {
+    float* HWY_RESTRICT old_d, float* HWY_RESTRICT scales,
+    float* HWY_RESTRICT q_scales_s = nullptr, float max_v_scale = 1.0f) {
   using DF8 = hn::CappedTag<float, 8>;
   const DF8 df8;
   using VF8 = hn::Vec<DF8>;
@@ -755,6 +734,7 @@ static HWY_INLINE void FlashAttentionTileStepAndApplySoftCap8(
     VF8 one_over_cap = hn::Set(df8, one_over_att_cap);
     new_max = hn::Mul(cap, hn::Tanh(df8, hn::Mul(new_max, one_over_cap)));
   }
+  VF8 local_max = new_max;
   VF8 old_max_vf = hn::Set(df8, kNegInf);
   old_max_vf = hn::LoadU(df8, old_max);
   new_max = hn::Max(new_max, old_max_vf);
@@ -817,8 +797,22 @@ static HWY_INLINE void FlashAttentionTileStepAndApplySoftCap8(
   const VF8 zero8 = hn::Zero(df8);
   const VF8 one_over_d =
       hn::MaskedDivOr(zero8, non_zero_mask, hn::Set(df8, 1.0f), old_d_vf);
+  VF8 q_scale;
+  if (q_scales_s != nullptr) {
+    VF8 max_s = hn::Mul(one_over_d, hn::Exp(df8, hn::Sub(local_max, new_max)));
+    hn::Store(hn::Mul(max_s, hn::Set(df8, max_v_scale / 32767.0f)), df8,
+              q_scales_s);
+
+    auto max_s_gt_0 = hn::Gt(max_s, zero8);
+    float inv_max_v_scale = 1.0f / std::max(max_v_scale, 1e-10f);
+    VF8 mult = hn::Mul(hn::Set(df8, 32767.0f * inv_max_v_scale),
+                       hn::Exp(df8, hn::Sub(new_max, local_max)));
+    q_scale = hn::IfThenElse(max_s_gt_0, mult, zero8);
+  } else {
+    q_scale = one_over_d;
+  }
   HWY_ALIGN float tmp_one_over_d[8];
-  hn::Store(one_over_d, df8, tmp_one_over_d);
+  hn::Store(q_scale, df8, tmp_one_over_d);
   hn::BlendedStore(old_d_vf, changed_max, df8, old_d);
   scale = hn::Mul(scale, one_over_d);
   hn::BlendedStore(scale, changed_max, df8, scales);
@@ -862,7 +856,8 @@ static HWY_INLINE void FlashAttentionTileStepAndApplySoftCap(
     VF& x_4_p0, VF& x_4_p1, VF& x_5_p0, VF& x_5_p1, VF& x_6_p0, VF& x_6_p1,
     VF& x_7_p0, VF& x_7_p1, float* HWY_RESTRICT old_max,
     float* HWY_RESTRICT old_d, float* HWY_RESTRICT scales, size_t q_group_idx,
-    size_t kNumQueriesPerGroup) {
+    size_t kNumQueriesPerGroup, float* HWY_RESTRICT q_scales_s = nullptr,
+    float max_v_scale = 1.0f) {
   constexpr int kFirstHalfAmountOfQueries = std::min(kNumQueries, 4);
   [[maybe_unused]] constexpr int kSecondHalfAmountOfQueries =
       kNumQueries - kFirstHalfAmountOfQueries;
@@ -870,25 +865,30 @@ static HWY_INLINE void FlashAttentionTileStepAndApplySoftCap(
     FlashAttentionTileStepAndApplySoftCap4<kFirstHalfAmountOfQueries>(
         df, att_cap, one_over_att_cap, x_0_p0, x_0_p1, x_1_p0, x_1_p1, x_2_p0,
         x_2_p1, x_3_p0, x_3_p1, old_max + (q_group_idx)*kNumQueriesPerGroup,
-        old_d + (q_group_idx)*kNumQueriesPerGroup, scales);
+        old_d + (q_group_idx)*kNumQueriesPerGroup, scales, q_scales_s,
+        max_v_scale);
   } else {
 #if HWY_MAX_BYTES <= 16
     FlashAttentionTileStepAndApplySoftCap4<4>(
         df, att_cap, one_over_att_cap, x_0_p0, x_0_p1, x_1_p0, x_1_p1, x_2_p0,
         x_2_p1, x_3_p0, x_3_p1, old_max + (q_group_idx)*kNumQueriesPerGroup,
-        old_d + (q_group_idx)*kNumQueriesPerGroup, scales);
+        old_d + (q_group_idx)*kNumQueriesPerGroup, scales, q_scales_s,
+        max_v_scale);
     FlashAttentionTileStepAndApplySoftCap4<kSecondHalfAmountOfQueries>(
         df, att_cap, one_over_att_cap, x_4_p0, x_4_p1, x_5_p0, x_5_p1, x_6_p0,
         x_6_p1, x_7_p0, x_7_p1,
         old_max + (q_group_idx + 1) * kNumQueriesPerGroup,
         old_d + (q_group_idx + 1) * kNumQueriesPerGroup,
-        scales + kNumQueriesPerGroup);
+        scales + kNumQueriesPerGroup,
+        q_scales_s == nullptr ? nullptr : q_scales_s + kNumQueriesPerGroup,
+        max_v_scale);
 #else
     FlashAttentionTileStepAndApplySoftCap8<kNumQueries>(
         df, att_cap, one_over_att_cap, x_0_p0, x_0_p1, x_1_p0, x_1_p1, x_2_p0,
         x_2_p1, x_3_p0, x_3_p1, x_4_p0, x_4_p1, x_5_p0, x_5_p1, x_6_p0, x_6_p1,
         x_7_p0, x_7_p1, old_max + (q_group_idx)*kNumQueriesPerGroup,
-        old_d + (q_group_idx)*kNumQueriesPerGroup, scales);
+        old_d + (q_group_idx)*kNumQueriesPerGroup, scales, q_scales_s,
+        max_v_scale);
 #endif
   }
 }
@@ -995,6 +995,138 @@ static HWY_INLINE void QDotKTilexUpTo8TransposedKDoubleWidth(
       sum7_p1 = hn::MulAdd(
           k_vec2, hn::Set(df, q2[i * kSecondHalfAmountOfQueries + 3]), sum7_p1);
     }
+  }
+}
+
+template <int kNumQueries, class DF, class VF = hn::Vec<DF>>
+static HWY_INLINE void QDotKTilexUpTo8TransposedKDoubleWidthInt16(
+    DF df, const int16_t* HWY_RESTRICT q, const int16_t* HWY_RESTRICT q2,
+    const int8_t* HWY_RESTRICT k_transposed_tile, size_t qkv_dim, VF& sum0_p0,
+    VF& sum0_p1, VF& sum1_p0, VF& sum1_p1, VF& sum2_p0, VF& sum2_p1,
+    VF& sum3_p0, VF& sum3_p1, VF& sum4_p0, VF& sum4_p1, VF& sum5_p0,
+    VF& sum5_p1, VF& sum6_p0, VF& sum6_p1, VF& sum7_p0, VF& sum7_p1) {
+  using DI16 = hn::ScalableTag<int16_t>;
+  const DI16 di16;
+  using VI16 = hn::Vec<DI16>;
+  using DI32 = hn::Repartition<int32_t, DF>;
+  const DI32 di32;
+  using VI32 = hn::Vec<DI32>;
+  HWY_DASSERT(hn::Lanes(di16) <= gcpp::KVCache::kTileSize);
+  HWY_DASSERT(kNumQueries <= 8);
+  HWY_DASSERT(gcpp::KVCache::kTileSize >= hn::Lanes(df) * 2);
+
+  VI32 isum0_p0 = hn::Zero(di32);
+  VI32 isum0_p1 = hn::Zero(di32);
+  VI32 isum1_p0 = hn::Zero(di32), isum1_p1 = hn::Zero(di32);
+  VI32 isum2_p0 = hn::Zero(di32), isum2_p1 = hn::Zero(di32);
+  VI32 isum3_p0 = hn::Zero(di32), isum3_p1 = hn::Zero(di32);
+  VI32 isum4_p0 = hn::Zero(di32), isum4_p1 = hn::Zero(di32);
+  VI32 isum5_p0 = hn::Zero(di32), isum5_p1 = hn::Zero(di32);
+  VI32 isum6_p0 = hn::Zero(di32), isum6_p1 = hn::Zero(di32);
+  VI32 isum7_p0 = hn::Zero(di32), isum7_p1 = hn::Zero(di32);
+  VI32 isum0_odd_p0 = hn::Zero(di32), isum0_odd_p1 = hn::Zero(di32);
+  VI32 isum1_odd_p0 = hn::Zero(di32), isum1_odd_p1 = hn::Zero(di32);
+  VI32 isum2_odd_p0 = hn::Zero(di32), isum2_odd_p1 = hn::Zero(di32);
+  VI32 isum3_odd_p0 = hn::Zero(di32), isum3_odd_p1 = hn::Zero(di32);
+  VI32 isum4_odd_p0 = hn::Zero(di32), isum4_odd_p1 = hn::Zero(di32);
+  VI32 isum5_odd_p0 = hn::Zero(di32), isum5_odd_p1 = hn::Zero(di32);
+  VI32 isum6_odd_p0 = hn::Zero(di32), isum6_odd_p1 = hn::Zero(di32);
+  VI32 isum7_odd_p0 = hn::Zero(di32), isum7_odd_p1 = hn::Zero(di32);
+
+  const int32_t* q_int32_ptr = HWY_RCAST_ALIGNED(const int32_t*, q);
+  const int32_t* q2_int32_ptr = HWY_RCAST_ALIGNED(const int32_t*, q2);
+  constexpr int kFirstHalfAmountOfQueries = std::min(kNumQueries, 4);
+  constexpr int kSecondHalfAmountOfQueries =
+      kNumQueries - kFirstHalfAmountOfQueries;
+
+  const hn::Repartition<int8_t, DI16> di8;
+  const hn::Half<decltype(di8)> di8_half;
+  for (size_t i = 0; i < qkv_dim / 2; i++) {
+    auto k_dim0 = hn::LoadU(
+        di8_half, k_transposed_tile + (i * 2) * gcpp::KVCache::kTileSize);
+    auto k_dim1 = hn::LoadU(di8_half, k_transposed_tile +
+                                          (i * 2) * gcpp::KVCache::kTileSize +
+                                          hn::Lanes(di8_half));
+    auto k_vec1 = hn::PromoteTo(di16, k_dim0);
+    auto k_vec2 = hn::PromoteTo(di16, k_dim1);
+
+    auto accumulate = [&](int32_t q_val, VI32& sum_p0, VI32& sum_p1,
+                          VI32& sum_odd_p0, VI32& sum_odd_p1) HWY_ATTR {
+      VI16 q_vec = hn::BitCast(di16, hn::Set(di32, q_val));
+      sum_p0 = hn::ReorderWidenMulAccumulate(di32, k_vec1, q_vec, sum_p0,
+                                             sum_odd_p0);
+      sum_p1 = hn::ReorderWidenMulAccumulate(di32, k_vec2, q_vec, sum_p1,
+                                             sum_odd_p1);
+    };
+
+    accumulate(q_int32_ptr[i * kFirstHalfAmountOfQueries], isum0_p0, isum0_p1,
+               isum0_odd_p0, isum0_odd_p1);
+    if constexpr (kNumQueries >= 2) {
+      accumulate(q_int32_ptr[i * kFirstHalfAmountOfQueries + 1], isum1_p0,
+                 isum1_p1, isum1_odd_p0, isum1_odd_p1);
+    }
+    if constexpr (kNumQueries >= 3) {
+      accumulate(q_int32_ptr[i * kFirstHalfAmountOfQueries + 2], isum2_p0,
+                 isum2_p1, isum2_odd_p0, isum2_odd_p1);
+    }
+    if constexpr (kNumQueries >= 4) {
+      accumulate(q_int32_ptr[i * kFirstHalfAmountOfQueries + 3], isum3_p0,
+                 isum3_p1, isum3_odd_p0, isum3_odd_p1);
+    }
+    if constexpr (kNumQueries >= 5) {
+      accumulate(q2_int32_ptr[i * kSecondHalfAmountOfQueries + 0], isum4_p0,
+                 isum4_p1, isum4_odd_p0, isum4_odd_p1);
+    }
+    if constexpr (kNumQueries >= 6) {
+      accumulate(q2_int32_ptr[i * kSecondHalfAmountOfQueries + 1], isum5_p0,
+                 isum5_p1, isum5_odd_p0, isum5_odd_p1);
+    }
+    if constexpr (kNumQueries >= 7) {
+      accumulate(q2_int32_ptr[i * kSecondHalfAmountOfQueries + 2], isum6_p0,
+                 isum6_p1, isum6_odd_p0, isum6_odd_p1);
+    }
+    if constexpr (kNumQueries >= 8) {
+      accumulate(q2_int32_ptr[i * kSecondHalfAmountOfQueries + 3], isum7_p0,
+                 isum7_p1, isum7_odd_p0, isum7_odd_p1);
+    }
+  }
+
+  auto convert_to_float = [&](const VI32& sum_p0, const VI32& sum_odd_p0,
+                              const VI32& sum_p1, const VI32& sum_odd_p1,
+                              VF& out_p0, VF& out_p1) HWY_ATTR {
+    out_p0 = hn::ConvertTo(df, hn::RearrangeToOddPlusEven(sum_p0, sum_odd_p0));
+    out_p1 = hn::ConvertTo(df, hn::RearrangeToOddPlusEven(sum_p1, sum_odd_p1));
+  };
+
+  convert_to_float(isum0_p0, isum0_odd_p0, isum0_p1, isum0_odd_p1, sum0_p0,
+                   sum0_p1);
+  if constexpr (kNumQueries >= 2) {
+    convert_to_float(isum1_p0, isum1_odd_p0, isum1_p1, isum1_odd_p1, sum1_p0,
+                     sum1_p1);
+  }
+  if constexpr (kNumQueries >= 3) {
+    convert_to_float(isum2_p0, isum2_odd_p0, isum2_p1, isum2_odd_p1, sum2_p0,
+                     sum2_p1);
+  }
+  if constexpr (kNumQueries >= 4) {
+    convert_to_float(isum3_p0, isum3_odd_p0, isum3_p1, isum3_odd_p1, sum3_p0,
+                     sum3_p1);
+  }
+  if constexpr (kNumQueries >= 5) {
+    convert_to_float(isum4_p0, isum4_odd_p0, isum4_p1, isum4_odd_p1, sum4_p0,
+                     sum4_p1);
+  }
+  if constexpr (kNumQueries >= 6) {
+    convert_to_float(isum5_p0, isum5_odd_p0, isum5_p1, isum5_odd_p1, sum5_p0,
+                     sum5_p1);
+  }
+  if constexpr (kNumQueries >= 7) {
+    convert_to_float(isum6_p0, isum6_odd_p0, isum6_p1, isum6_odd_p1, sum6_p0,
+                     sum6_p1);
+  }
+  if constexpr (kNumQueries >= 8) {
+    convert_to_float(isum7_p0, isum7_odd_p0, isum7_p1, isum7_odd_p1, sum7_p0,
+                     sum7_p1);
   }
 }
 
@@ -1306,6 +1438,47 @@ static HWY_INLINE void MultiplyByScale(DF df, const BF16* scales, VF& x0_p0,
   }
 }
 
+template <int kNumQueries, class DF, class VF = hn::Vec<DF>>
+static HWY_INLINE void ApplyQuantizationScale(
+    DF df, const float* HWY_RESTRICT q_scales, int q_group_idx,
+    int kNumQueriesPerGroup, VF& x0_p0, VF& x0_p1, VF& x1_p0, VF& x1_p1,
+    VF& x2_p0, VF& x2_p1, VF& x3_p0, VF& x3_p1, VF& x4_p0, VF& x4_p1, VF& x5_p0,
+    VF& x5_p1, VF& x6_p0, VF& x6_p1, VF& x7_p0, VF& x7_p1) {
+  auto apply_scale = [&](int group_offset, int query_offset, VF& x_p0,
+                         VF& x_p1) HWY_ATTR {
+    int scale_idx =
+        (q_group_idx + group_offset) * kNumQueriesPerGroup + query_offset;
+    VF s = hn::Set(df, q_scales[scale_idx]);
+    x_p0 = hn::Mul(x_p0, s);
+    x_p1 = hn::Mul(x_p1, s);
+  };
+
+  if constexpr (kNumQueries >= 1) {
+    apply_scale(0, 0, x0_p0, x0_p1);
+  }
+  if constexpr (kNumQueries >= 2) {
+    apply_scale(0, 1, x1_p0, x1_p1);
+  }
+  if constexpr (kNumQueries >= 3) {
+    apply_scale(0, 2, x2_p0, x2_p1);
+  }
+  if constexpr (kNumQueries >= 4) {
+    apply_scale(0, 3, x3_p0, x3_p1);
+  }
+  if constexpr (kNumQueries >= 5) {
+    apply_scale(1, 0, x4_p0, x4_p1);
+  }
+  if constexpr (kNumQueries >= 6) {
+    apply_scale(1, 1, x5_p0, x5_p1);
+  }
+  if constexpr (kNumQueries >= 7) {
+    apply_scale(1, 2, x6_p0, x6_p1);
+  }
+  if constexpr (kNumQueries >= 8) {
+    apply_scale(1, 3, x7_p0, x7_p1);
+  }
+}
+
 // Performs tiled flash attention for arbitrary number of queries
 // It depends on kv being tiled.
 // Runs 2 loops one over tiles, and inner one over queries(up to 4 at a time).
@@ -1317,6 +1490,7 @@ static HWY_INLINE void MultiplyByScale(DF df, const BF16* scales, VF& x0_p0,
 // as it will be used to figure out when to switch to the next one.
 // q_T_in_groups_up_to_4 - Span of float* All except last float*
 // should have (qkv_dim, 4) Last one can have any size up to 4.
+// q_scales - Span of float of shape (q_count,) used for Queries in int16 format
 // start_pos_per_query - start position in kv to start attention from ()
 // last_pos_per_query - last position in kv to attend to (exclusive)
 // queries_per_timestep - how many queries begin/end on the same timestep
@@ -1332,6 +1506,7 @@ template <typename KV_T, typename Q_T>
 HWY_NOINLINE void TileFlashAttentionReturnExpSumsAndMaxLogits(
     const hwy::Span<const MatPtrT<KV_T>> kvs, int q_count,
     const hwy::Span<const Q_T * HWY_RESTRICT> q_T_in_groups_up_to_4,
+    const hwy::Span<const float> q_scales,
     hwy::Span<const size_t> start_pos_per_query,
     hwy::Span<const size_t> last_pos_per_query, const float att_cap,
     MatPtrT<float>& att_out, float* HWY_RESTRICT exp_denominator_sums,
@@ -1406,6 +1581,12 @@ HWY_NOINLINE void TileFlashAttentionReturnExpSumsAndMaxLogits(
   size_t current_kv_start_offset = 0;
   size_t current_kv_idx = 0;
 
+  HWY_ALIGN float q_scales_s[8];
+  float* q_scales_s_ptr = nullptr;
+  if constexpr (IsInt16<Q_T>()) {
+    q_scales_s_ptr = q_scales_s;
+  }
+  float max_v_scale = 1.0f;
   auto inner_loop = [&]<int kNumQueries>(int q_group_idx) HWY_ATTR {
     int loop_idx = q_group_idx / (kNumQueriesPerLoop / kNumQueriesPerGroup);
     if (position + step_size <= min_start_pos_per_group[loop_idx] ||
@@ -1429,6 +1610,7 @@ HWY_NOINLINE void TileFlashAttentionReturnExpSumsAndMaxLogits(
     if (kNumQueries > 4) {
       q2_group = q_T_in_groups_up_to_4[q_group_idx + 1];
     }
+
     if constexpr (IsF32<Q_T>()) {
       const KV_T* k_transposed_tile = tile_base + pos_in_tile;
       QDotKTilexUpTo8TransposedKDoubleWidth<kNumQueries>(
@@ -1441,10 +1623,16 @@ HWY_NOINLINE void TileFlashAttentionReturnExpSumsAndMaxLogits(
           df, q_group, q2_group, k_transposed_tile, qkv_dim, x_0_p_0, x_0_p_1,
           x_1_p_0, x_1_p_1, x_2_p_0, x_2_p_1, x_3_p_0, x_3_p_1, x_4_p_0,
           x_4_p_1, x_5_p_0, x_5_p_1, x_6_p_0, x_6_p_1, x_7_p_0, x_7_p_1);
+    } else if constexpr (IsInt16<Q_T>()) {
+      const KV_T* k_transposed_tile = tile_base + pos_in_tile * 2;
+      QDotKTilexUpTo8TransposedKDoubleWidthInt16<kNumQueries>(
+          df, q_group, q2_group, k_transposed_tile, qkv_dim, x_0_p_0, x_0_p_1,
+          x_1_p_0, x_1_p_1, x_2_p_0, x_2_p_1, x_3_p_0, x_3_p_1, x_4_p_0,
+          x_4_p_1, x_5_p_0, x_5_p_1, x_6_p_0, x_6_p_1, x_7_p_0, x_7_p_1);
     } else {
-      static_assert(
-          false,
-          "Query type type not supported, only float and BF16 are supported");
+      static_assert(false,
+                    "Query type not supported, only float, BF16, and "
+                    "Int16 are supported");
     }
     // microscaling
     // TODO: Change to more generic function to inform if we should use
@@ -1460,6 +1648,13 @@ HWY_NOINLINE void TileFlashAttentionReturnExpSumsAndMaxLogits(
                                    x_1_p_0, x_1_p_1, x_2_p_0, x_2_p_1, x_3_p_0,
                                    x_3_p_1, x_4_p_0, x_4_p_1, x_5_p_0, x_5_p_1,
                                    x_6_p_0, x_6_p_1, x_7_p_0, x_7_p_1);
+    }
+    if constexpr (IsInt16<Q_T>()) {
+      ApplyQuantizationScale<kNumQueries>(
+          df, q_scales.data(), q_group_idx, kNumQueriesPerGroup, x_0_p_0,
+          x_0_p_1, x_1_p_0, x_1_p_1, x_2_p_0, x_2_p_1, x_3_p_0, x_3_p_1,
+          x_4_p_0, x_4_p_1, x_5_p_0, x_5_p_1, x_6_p_0, x_6_p_1, x_7_p_0,
+          x_7_p_1);
     }
 
     constexpr int kFirstHalfAmountOfQueries = std::min(kNumQueries, 4);
@@ -1485,15 +1680,29 @@ HWY_NOINLINE void TileFlashAttentionReturnExpSumsAndMaxLogits(
           x_7_p_0, x_7_p_1);
     }
     HWY_ALIGN float scales[kNumQueriesPerLoop];
-    // HWY_UNROLL(kNumQueriesPerLoop)
+
     for (size_t i = 0; i < kNumQueriesPerLoop; ++i) {
       scales[i] = 1.0f;
     }
+
+    if constexpr (IsInt16<Q_T>() && kUseMicroScaling) {
+      if (q_group_idx == 0) {  // update only when needed
+        const BF16* microscaling_scales_v =
+            reinterpret_cast<const BF16*>(tile_base + qkv_dim * 2 * kTileSize) +
+            kTileSize + pos_in_tile;
+        const PackedSpan<const BF16> scales_span =
+            MakeConstSpan(microscaling_scales_v, 2 * hn::Lanes(df));
+        VF v_scales_p0, v_scales_p1;
+        Decompress2(df, scales_span, 0, v_scales_p0, v_scales_p1);
+        max_v_scale = hn::ReduceMax(df, hn::Max(v_scales_p0, v_scales_p1));
+      }
+    }
+
     FlashAttentionTileStepAndApplySoftCap<kNumQueries>(
         df, 0.0f, 1.0f, x_0_p_0, x_0_p_1, x_1_p_0, x_1_p_1, x_2_p_0, x_2_p_1,
         x_3_p_0, x_3_p_1, x_4_p_0, x_4_p_1, x_5_p_0, x_5_p_1, x_6_p_0, x_6_p_1,
         x_7_p_0, x_7_p_1, max_logits, exp_denominator_sums, scales, q_group_idx,
-        kNumQueriesPerGroup);
+        kNumQueriesPerGroup, q_scales_s_ptr, max_v_scale);
     if constexpr (kUseMicroScaling) {
       const BF16* microscaling_scales_v =
           reinterpret_cast<const BF16*>(tile_base + qkv_dim * 2 * kTileSize) +
@@ -1508,7 +1717,13 @@ HWY_NOINLINE void TileFlashAttentionReturnExpSumsAndMaxLogits(
           df, scales, x_0_p_0, x_0_p_1, x_1_p_0, x_1_p_1, x_2_p_0, x_2_p_1,
           x_3_p_0, x_3_p_1, x_4_p_0, x_4_p_1, x_5_p_0, x_5_p_1, x_6_p_0,
           x_6_p_1, x_7_p_0, x_7_p_1, v_tile, att_out_per_query[loop_idx]);
-    } else if constexpr (IsBF16<Q_T>()) {
+    } else if constexpr (IsInt16<Q_T>()) {
+      MulByConstAndAddTileUpTo8_BF16_Int16<kNumQueries>(
+          df, scales, x_0_p_0, x_0_p_1, x_1_p_0, x_1_p_1, x_2_p_0, x_2_p_1,
+          x_3_p_0, x_3_p_1, x_4_p_0, x_4_p_1, x_5_p_0, x_5_p_1, x_6_p_0,
+          x_6_p_1, x_7_p_0, x_7_p_1, v_tile, att_out_per_query[loop_idx],
+          q_scales_s);
+    } else {
       MulByConstAndAddTileUpTo8_BF16<kNumQueries>(
           df, scales, x_0_p_0, x_0_p_1, x_1_p_0, x_1_p_1, x_2_p_0, x_2_p_1,
           x_3_p_0, x_3_p_1, x_4_p_0, x_4_p_1, x_5_p_0, x_5_p_1, x_6_p_0,
@@ -1558,7 +1773,7 @@ void DispatchTileFlashAttentionReturnExpSumsAndMaxLogits(
     float* HWY_RESTRICT max_logits) {
   CallUpcastedKVs(kvs, [&](const auto& kv_t) {
     return TileFlashAttentionReturnExpSumsAndMaxLogits(
-        kv_t, q_count, q_T_in_groups_up_to_4, start_pos_per_query,
+        kv_t, q_count, q_T_in_groups_up_to_4, {}, start_pos_per_query,
         last_pos_per_query, att_cap, att_out, exp_denominator_sums, max_logits);
   });
 }
@@ -1572,9 +1787,29 @@ void DispatchTileFlashAttentionReturnExpSumsAndMaxLogitsBF16(
     float* HWY_RESTRICT max_logits) {
   CallUpcastedKVs(kvs, [&](const auto& kv_t) {
     return TileFlashAttentionReturnExpSumsAndMaxLogits(
-        kv_t, q_count, q_T_in_groups_up_to_4, start_pos_per_query,
+        kv_t, q_count, q_T_in_groups_up_to_4, {}, start_pos_per_query,
         last_pos_per_query, att_cap, att_out, exp_denominator_sums, max_logits);
   });
+}
+
+void DispatchTileFlashAttentionReturnExpSumsAndMaxLogitsInt16(
+    hwy::Span<const MatPtr> kvs, int q_count,
+    const hwy::Span<const int16_t* HWY_RESTRICT> q_T_in_groups_up_to_4,
+    const hwy::Span<const float> q_scales,
+    hwy::Span<const size_t> start_pos_per_query,
+    hwy::Span<const size_t> last_pos_per_query, float att_cap,
+    MatPtrT<float>& att_out, float* HWY_RESTRICT exp_denominator_sums,
+    float* HWY_RESTRICT max_logits) {
+  for ([[maybe_unused]] auto&& mat : kvs) {
+    HWY_DASSERT(mat.GetType() == Type::kInt8);
+  }
+  auto matptrs = MakeMatPtrVec<int8_t>(kvs);
+  hwy::Span<const MatPtrT<int8_t>> matptrs_span(matptrs.data(), matptrs.size());
+
+  return TileFlashAttentionReturnExpSumsAndMaxLogits(
+      matptrs_span, q_count, q_T_in_groups_up_to_4, q_scales,
+      start_pos_per_query, last_pos_per_query, att_cap, att_out,
+      exp_denominator_sums, max_logits);
 }
 
 // Implements flash attention for a strip of tiles of size 1, 4 or 8 query

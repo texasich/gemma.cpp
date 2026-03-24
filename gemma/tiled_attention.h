@@ -28,6 +28,12 @@ namespace gcpp {
       const size_t layer_idx, const LayerWeightsPtrs& layer,                 \
       AttentionActivationsPtrs& activations, QBatch& qbatch,                 \
       ThreadingContext& ctx);                                                \
+                                                                             \
+  template <typename OutT>                                                   \
+  std::tuple<std::vector<OutT, hwy::AlignedAllocator<OutT>>,                 \
+             std::vector<OutT*>, AlignedFloatVector>                         \
+  TransposeQueriesToGroupsOfNBF16orInt16(hwy::Span<float*> queries_ptrs,     \
+                                         int qkv_dim, size_t group_size);    \
   /* NOLINTNEXTLINE(google-readability-namespace-comments) */                \
   }  // namespace NAMESPACE
 

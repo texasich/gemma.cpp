@@ -99,6 +99,7 @@ enum class AttentionImpl {
   kFlash,  // Flash Attention (default)
   kFlashTransposedQs,
   kFlashTransposedQsBF16,
+  kFlashTransposedQsInt16,
   kSentinel,
 };
 

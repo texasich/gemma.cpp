@@ -199,6 +199,11 @@ constexpr bool IsInt8() {
 }
 
 template <typename Packed>
+constexpr bool IsInt16() {
+  return hwy::IsSame<hwy::RemoveCvRef<Packed>, int16_t>();
+}
+
+template <typename Packed>
 constexpr bool IsBF16() {
   return hwy::IsSame<hwy::RemoveCvRef<Packed>, BF16>();
 }

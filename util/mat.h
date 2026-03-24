@@ -481,6 +481,16 @@ decltype(auto) CallUpcastedKV(const MatPtr* base, const Func& func,
   }
 }
 
+template <typename T>
+std::vector<MatPtrT<T>> MakeMatPtrVec(hwy::Span<const MatPtr> base) {
+  std::vector<MatPtrT<T>> matptrs;
+  matptrs.reserve(base.size());
+  for (auto&& mat : base) {
+    matptrs.emplace_back(mat);
+  }
+  return matptrs;
+}
+
 // Calls 'func' with a span of MatPtrT<T> for all elements in `base`.
 // T is dynamic type, read from base. It is assumed that all elements in `base`
 // have the same type.
@@ -491,25 +501,17 @@ decltype(auto) CallUpcastedKVs(hwy::Span<const MatPtr> base, const Func& func,
   for ([[maybe_unused]] auto&& mat : base) {
     HWY_DASSERT(mat.GetType() == type);
   }
-  auto make_matptr_vec = [&base](auto element) {
-    std::vector<MatPtrT<decltype(element)>> matptrs;
-    matptrs.reserve(base.size());
-    for (auto&& mat : base) {
-      matptrs.emplace_back(mat);
-    }
-    return matptrs;
-  };
   if (type == Type::kF32) {
-    auto matptrs = make_matptr_vec(float{});
+    auto matptrs = MakeMatPtrVec<float>(base);
     hwy::Span<const MatPtrT<float>> matptrs_span(matptrs.data(),
                                                  matptrs.size());
     return func(matptrs_span, std::forward<Args>(args)...);
   } else if (type == Type::kBF16) {
-    auto matptrs = make_matptr_vec(BF16{});
+    auto matptrs = MakeMatPtrVec<BF16>(base);
     hwy::Span<const MatPtrT<BF16>> matptrs_span(matptrs.data(), matptrs.size());
     return func(matptrs_span, std::forward<Args>(args)...);
   } else if (type == Type::kInt8) {
-    auto matptrs = make_matptr_vec(int8_t{});
+    auto matptrs = MakeMatPtrVec<int8_t>(base);
     hwy::Span<const MatPtrT<int8_t>> matptrs_span(matptrs.data(),
                                                   matptrs.size());
     return func(matptrs_span, std::forward<Args>(args)...);

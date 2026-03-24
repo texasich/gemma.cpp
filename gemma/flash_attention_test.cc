@@ -56,6 +56,7 @@
 #include "gemma/attention.h"
 #include "gemma/configs.h"
 #include "gemma/flash_attention.h"
+#include "gemma/tiled_attention.h"
 #include "hwy/tests/test_util-inl.h"
 
 HWY_BEFORE_NAMESPACE();
@@ -416,25 +417,22 @@ void TestTiledFlashAttentionBF16() {
                        ctx.allocator, MatPadding::kPacked);
   PopulateTestKVCache(kv, gcpp::KVEncoding::kBF16TwoTranspositions, qkv_dim);
 
-  std::vector<BF16> q_float(num_queries_per_timestep * qkv_dim);
-  std::vector<BF16> q_float2(num_queries_per_timestep * qkv_dim);
-  // fill in qs with predictable, synthetic data
-  for (size_t i = 0; i < num_queries_per_timestep; ++i) {
-    for (size_t j = 0; j < qkv_dim; j += 2) {
-      q_float[j * num_queries_per_timestep + i * 2] =
-          hwy::ConvertScalarTo<BF16>(0.01f * (i + 1) / (j + 1));
-      q_float[j * num_queries_per_timestep + i * 2 + 1] =
-          hwy::ConvertScalarTo<BF16>(0.01f * (i + 1) / (j + 2));
-
-      q_float2[j * num_queries_per_timestep + i * 2] =
-          hwy::ConvertScalarTo<BF16>(
-              0.01f * (i + num_queries_per_timestep + 1) / (j + 1));
-      q_float2[j * num_queries_per_timestep + i * 2 + 1] =
-          hwy::ConvertScalarTo<BF16>(
-              0.01f * (i + num_queries_per_timestep + 1) / (j + 2));
+  std::vector<float> q_all(num_queries * qkv_dim);
+  for (size_t i = 0; i < num_queries; ++i) {
+    for (size_t j = 0; j < qkv_dim; ++j) {
+      q_all[i * qkv_dim + j] = 0.01f * (i + 1) / (j + 1);
     }
   }
-  const BF16* q_T[2] = {q_float.data(), q_float2.data()};
+  std::vector<float*> q_ptrs(num_queries);
+  for (int i = 0; i < num_queries; ++i) {
+    q_ptrs[i] = q_all.data() + i * qkv_dim;
+  }
+  auto [transposed_queries, transposed_queries_ptrs, _] =
+      TransposeQueriesToGroupsOfNBF16orInt16<BF16>(hwy::Span<float*>(q_ptrs),
+                                                   qkv_dim, /*group_size=*/4);
+  hwy::Span<const BF16*> q_T(
+      const_cast<const BF16**>(transposed_queries_ptrs.data()),
+      transposed_queries_ptrs.size());
 
   MatStorageT<float> att_out("att_out", Extents2D(num_queries, qkv_dim),
                              ctx.allocator, MatPadding::kPacked);
@@ -465,8 +463,7 @@ void TestTiledFlashAttentionBF16() {
   }
   hwy::Span<const MatPtr> kvs(&kv, 1);
   DispatchTileFlashAttentionReturnExpSumsAndMaxLogitsBF16(
-      kvs, num_queries, hwy::Span<const BF16*>(q_T, 2),
-      hwy::Span<const size_t>(start_pos_per_query),
+      kvs, num_queries, q_T, hwy::Span<const size_t>(start_pos_per_query),
       hwy::Span<const size_t>(last_pos_per_query), att_cap, att_out,
       exp_denominator_sums.data(), max_logits.data());
 
@@ -482,6 +479,10 @@ void TestTiledFlashAttentionBF16() {
         << "i=" << i;
     EXPECT_NEAR(max_logits[i], max_logits_gold[i], 1e-3f) << "i=" << i;
     for (size_t j = 0; j < qkv_dim; ++j) {
+      if (j == 0) {
+        std::cerr << "att_out[0][" << j << "]=" << att_out.Row(i)[j]
+                  << " gold=" << att_out_gold[i * qkv_dim + j] << "\n";
+      }
       EXPECT_NEAR(att_out.Row(i)[j], att_out_gold[i * qkv_dim + j], 1e-3f);
     }
   }
@@ -577,6 +578,186 @@ void TestTiledFlashAttentionInt8() {
   }
 }
 
+
+void TestTiledFlashAttentionInt8BF16() {
+  int qkv_dim = 64;
+  int kv_seq_len = 60;  // number of tokens we will attend to. Not divisible by
+                        // tiles size to test the padding logic.
+  int padded_kv_seq_len = hwy::RoundUpTo(kv_seq_len, gcpp::KVCache::kTileSize);
+  float att_cap = 10.0f;
+  int num_queries = 8;
+  int num_queries_per_timestep = 4;
+  int num_tokens = num_queries / num_queries_per_timestep;
+  int kv_seq_end =
+      kv_seq_len - hwy::DivCeil(num_queries, num_queries_per_timestep);
+  ThreadingArgs threading_args;
+  ThreadingContext ctx(threading_args);
+
+  int num_tiles = padded_kv_seq_len / gcpp::KVCache::kTileSize;
+  int tile_size_bytes = 2 * qkv_dim * gcpp::KVCache::kTileSize +
+                        2 * sizeof(BF16) * gcpp::KVCache::kTileSize;
+
+  MatStorageT<int8_t> kv("kv", Extents2D(num_tiles, tile_size_bytes),
+                         ctx.allocator, MatPadding::kPacked);
+
+  // fill in kvs with predictable, synthetic data matching BF16 paired layout
+  PopulateTestKVCache(kv, gcpp::KVEncoding::kInt8TwoTranspositions, qkv_dim);
+
+  std::vector<float> q_all(num_queries * qkv_dim);
+  for (int i = 0; i < num_queries; ++i) {
+    for (int j = 0; j < qkv_dim; ++j) {
+      q_all[i * qkv_dim + j] = 0.01f * (i + 1) / (j + 1);
+    }
+  }
+  std::vector<float*> q_ptrs(num_queries);
+  for (int i = 0; i < num_queries; ++i) {
+    q_ptrs[i] = q_all.data() + i * qkv_dim;
+  }
+  auto [transposed_queries, transposed_queries_ptrs, _] =
+      TransposeQueriesToGroupsOfNBF16orInt16<BF16>(hwy::Span<float*>(q_ptrs),
+                                                   qkv_dim, /*group_size=*/4);
+  hwy::Span<const BF16*> q_T(
+      const_cast<const BF16**>(transposed_queries_ptrs.data()),
+      transposed_queries_ptrs.size());
+
+  MatStorageT<float> att_out("att_out", Extents2D(num_queries, qkv_dim),
+                             ctx.allocator, MatPadding::kPacked);
+  using DF = hn::ScalableTag<float>;
+  const DF df;
+  HWY_LANES_CONSTEXPR size_t lanes = hn::Lanes(df);
+  size_t num_queries_rounded_to_laness = hwy::RoundUpTo(num_queries, lanes);
+  std::vector<float> exp_denominator_sums(num_queries_rounded_to_laness);
+  std::vector<float> max_logits(num_queries_rounded_to_laness);
+  for (size_t i = 0; i < num_queries; ++i) {
+    hwy::ZeroBytes(att_out.Row(i),
+                   qkv_dim * sizeof(decltype(att_out.Row(i)[0])));
+    exp_denominator_sums[i] = 0.0f;
+    max_logits[i] = -std::numeric_limits<float>::max() / 2.0f;
+  }
+  std::vector<size_t, hwy::AlignedAllocator<size_t>> start_pos_per_query;
+  std::vector<size_t, hwy::AlignedAllocator<size_t>> last_pos_per_query;
+  start_pos_per_query.reserve(num_queries);
+  last_pos_per_query.reserve(num_queries);
+  for (int token_idx = 0; token_idx < num_tokens; ++token_idx) {
+    ssize_t query_last_pos = kv_seq_end + token_idx;
+    ssize_t query_start_pos =
+        std::max(query_last_pos - 100000 + 1, static_cast<ssize_t>(0));
+    for (int q_head_idx = 0; q_head_idx < num_queries_per_timestep;
+         ++q_head_idx) {
+      start_pos_per_query.push_back(query_start_pos);
+      last_pos_per_query.push_back(query_last_pos);
+    }
+  }
+
+  hwy::Span<const MatPtr> kvs(&kv, 1);
+  DispatchTileFlashAttentionReturnExpSumsAndMaxLogitsBF16(
+      kvs, num_queries, q_T, hwy::Span<const size_t>(start_pos_per_query),
+      hwy::Span<const size_t>(last_pos_per_query), att_cap, att_out,
+      exp_denominator_sums.data(), max_logits.data());
+
+  PrintMatPtr(att_out);
+  for (int i = 0; i < num_queries; ++i) {
+    std::cerr << "exp_d: " << exp_denominator_sums[i]
+              << " max_logit: " << max_logits[i] << std::endl;
+    EXPECT_NEAR(exp_denominator_sums[i], exp_denominator_sums_gold[i], 2e-2f)
+        << "i=" << i;
+    EXPECT_NEAR(max_logits[i], max_logits_gold[i], 1e-3f) << "i=" << i;
+    for (int j = 0; j < qkv_dim; ++j) {
+      EXPECT_NEAR(att_out.Row(i)[j], att_out_gold[i * qkv_dim + j], 5e-3f);
+    }
+  }
+}
+
+void TestTiledFlashAttentionInt8Int16() {
+  int qkv_dim = 64;
+  int kv_seq_len = 60;  // number of tokens we will attend to. Not divisible by
+                        // tiles size to test the padding logic.
+  int padded_kv_seq_len = hwy::RoundUpTo(kv_seq_len, gcpp::KVCache::kTileSize);
+  float att_cap = 10.0f;
+  int num_queries = 8;
+  int num_queries_per_timestep = 4;
+  int num_tokens = num_queries / num_queries_per_timestep;
+  int kv_seq_end =
+      kv_seq_len - hwy::DivCeil(num_queries, num_queries_per_timestep);
+  ThreadingArgs threading_args;
+  ThreadingContext ctx(threading_args);
+
+  int num_tiles = padded_kv_seq_len / gcpp::KVCache::kTileSize;
+  int tile_size_bytes = 2 * qkv_dim * gcpp::KVCache::kTileSize +
+                        2 * sizeof(BF16) * gcpp::KVCache::kTileSize;
+
+  MatStorageT<int8_t> kv("kv", Extents2D(num_tiles, tile_size_bytes),
+                         ctx.allocator, MatPadding::kPacked);
+
+  // fill in kvs with predictable, synthetic data matching BF16 paired layout
+  PopulateTestKVCache(kv, gcpp::KVEncoding::kInt8TwoTranspositions, qkv_dim);
+
+  std::vector<float> q_all(num_queries * qkv_dim);
+  for (int i = 0; i < num_queries; ++i) {
+    for (int j = 0; j < qkv_dim; ++j) {
+      q_all[i * qkv_dim + j] = 0.01f * (i + 1) / (j + 1);
+    }
+  }
+  std::vector<float*> q_ptrs(num_queries);
+  for (int i = 0; i < num_queries; ++i) {
+    q_ptrs[i] = q_all.data() + i * qkv_dim;
+  }
+  auto [transposed_queries, transposed_queries_ptrs, q_scales] =
+      TransposeQueriesToGroupsOfNBF16orInt16<int16_t>(
+          hwy::Span<float*>(q_ptrs), qkv_dim, /*group_size=*/4);
+  hwy::Span<const int16_t*> q_T(
+      const_cast<const int16_t**>(transposed_queries_ptrs.data()),
+      transposed_queries_ptrs.size());
+
+  MatStorageT<float> att_out("att_out", Extents2D(num_queries, qkv_dim),
+                             ctx.allocator, MatPadding::kPacked);
+  using DF = hn::ScalableTag<float>;
+  const DF df;
+  HWY_LANES_CONSTEXPR size_t lanes = hn::Lanes(df);
+  size_t num_queries_rounded_to_laness = hwy::RoundUpTo(num_queries, lanes);
+  std::vector<float> exp_denominator_sums(num_queries_rounded_to_laness);
+  std::vector<float> max_logits(num_queries_rounded_to_laness);
+  for (size_t i = 0; i < num_queries; ++i) {
+    hwy::ZeroBytes(att_out.Row(i),
+                   qkv_dim * sizeof(decltype(att_out.Row(i)[0])));
+    exp_denominator_sums[i] = 0.0f;
+    max_logits[i] = -std::numeric_limits<float>::max() / 2.0f;
+  }
+  std::vector<size_t, hwy::AlignedAllocator<size_t>> start_pos_per_query;
+  std::vector<size_t, hwy::AlignedAllocator<size_t>> last_pos_per_query;
+  start_pos_per_query.reserve(num_queries);
+  last_pos_per_query.reserve(num_queries);
+  for (int token_idx = 0; token_idx < num_tokens; ++token_idx) {
+    ssize_t query_last_pos = kv_seq_end + token_idx;
+    ssize_t query_start_pos =
+        std::max(query_last_pos - 100000 + 1, static_cast<ssize_t>(0));
+    for (int q_head_idx = 0; q_head_idx < num_queries_per_timestep;
+         ++q_head_idx) {
+      start_pos_per_query.push_back(query_start_pos);
+      last_pos_per_query.push_back(query_last_pos);
+    }
+  }
+
+  hwy::Span<const MatPtr> kvs(&kv, 1);
+  DispatchTileFlashAttentionReturnExpSumsAndMaxLogitsInt16(
+      kvs, num_queries, q_T, q_scales,
+      hwy::Span<const size_t>(start_pos_per_query),
+      hwy::Span<const size_t>(last_pos_per_query), att_cap, att_out,
+      exp_denominator_sums.data(), max_logits.data());
+
+  PrintMatPtr(att_out);
+  for (int i = 0; i < num_queries; ++i) {
+    std::cerr << "exp_d: " << exp_denominator_sums[i]
+              << " max_logit: " << max_logits[i] << std::endl;
+    EXPECT_NEAR(exp_denominator_sums[i], exp_denominator_sums_gold[i], 2e-2f)
+        << "i=" << i;
+    EXPECT_NEAR(max_logits[i], max_logits_gold[i], 1e-3f) << "i=" << i;
+    for (int j = 0; j < qkv_dim; ++j) {
+      EXPECT_NEAR(att_out.Row(i)[j], att_out_gold[i * qkv_dim + j], 5e-3f);
+    }
+  }
+}
+
 // NOLINTNEXTLINE(google-readability-namespace-comments)
 }  // namespace HWY_NAMESPACE
 }  // namespace gcpp
@@ -590,6 +771,8 @@ HWY_EXPORT_AND_TEST_P(FlashAttentionTest, TestAttention);
 HWY_EXPORT_AND_TEST_P(FlashAttentionTest, TestTiledFlashAttention);
 HWY_EXPORT_AND_TEST_P(FlashAttentionTest, TestTiledFlashAttentionBF16);
 HWY_EXPORT_AND_TEST_P(FlashAttentionTest, TestTiledFlashAttentionInt8);
+HWY_EXPORT_AND_TEST_P(FlashAttentionTest, TestTiledFlashAttentionInt8BF16);
+HWY_EXPORT_AND_TEST_P(FlashAttentionTest, TestTiledFlashAttentionInt8Int16);
 HWY_AFTER_TEST();
 
 }  // namespace gcpp

@@ -1078,6 +1078,148 @@ HWY_INLINE HWY_MAYBE_UNUSED void MulByConstAndAddTileUpTo8(
   HWY_DASSERT(qkv_dim == i);
 }
 
+// Specialized version for BF16 models that uses int16 quantization for V.
+template <int32_t N, class DF, class VF = hn::Vec<DF>>
+HWY_INLINE HWY_MAYBE_UNUSED void MulByConstAndAddTileUpTo8_BF16_Int16(
+    DF df, const float* HWY_RESTRICT scales, const VF& c0_p0, const VF& c0_p1,
+    const VF& c1_p0, const VF& c1_p1, const VF& c2_p0, const VF& c2_p1,
+    const VF& c3_p0, const VF& c3_p1, const VF& c4_p0, const VF& c4_p1,
+    const VF& c5_p0, const VF& c5_p1, const VF& c6_p0, const VF& c6_p1,
+    const VF& c7_p0, const VF& c7_p1, const int8_t* HWY_RESTRICT v_tile,
+    MatPtrT<float>& out, const float* HWY_RESTRICT q_scales_s) {
+  static_assert(N <= 8);
+  namespace hn = hwy::HWY_NAMESPACE;
+  const size_t qkv_dim = out.Cols();
+  constexpr size_t kMaxLanes = hn::MaxLanes(df);
+  HWY_LANES_CONSTEXPR size_t NF = hn::Lanes(df);
+
+  using DI16 = hn::Repartition<int16_t, DF>;
+  const DI16 di16;
+  const auto di16_half = hn::Half<DI16>();
+  using DI32 = hn::Repartition<int32_t, DF>;
+  const DI32 di32;
+  using VI16 = hn::Vec<DI16>;
+  using VI32 = hn::Vec<DI32>;
+  using DI8 = hn::Repartition<int8_t, DF>;
+  const hn::Half<DI8> di8_half;
+  HWY_LANES_CONSTEXPR size_t kInt16Lanes = hn::Lanes(di16);
+
+  HWY_ALIGN int16_t cs_i16[N * kMaxLanes * 2];
+
+  auto quantize_s_and_store = [&](int j, const VF& p0, const VF& p1) HWY_ATTR {
+    auto i0 =
+        hn::OrderedDemote2To(di16, hn::NearestInt(p0), hn::NearestInt(p1));
+    hn::Store(i0, di16, cs_i16 + j * kMaxLanes * 2);
+  };
+
+  quantize_s_and_store(0, c0_p0, c0_p1);
+  if constexpr (N >= 2) quantize_s_and_store(1, c1_p0, c1_p1);
+  if constexpr (N >= 3) quantize_s_and_store(2, c2_p0, c2_p1);
+  if constexpr (N >= 4) quantize_s_and_store(3, c3_p0, c3_p1);
+  if constexpr (N >= 5) quantize_s_and_store(4, c4_p0, c4_p1);
+  if constexpr (N >= 6) quantize_s_and_store(5, c5_p0, c5_p1);
+  if constexpr (N >= 7) quantize_s_and_store(6, c6_p0, c6_p1);
+  if constexpr (N >= 8) quantize_s_and_store(7, c7_p0, c7_p1);
+
+  size_t i = 0;
+  HWY_DASSERT(qkv_dim % (NF * 2) == 0);
+  while (i + 2 * NF <= qkv_dim) {
+    VI32 acc0_0 = hn::Zero(di32), acc0_1 = hn::Zero(di32);
+    VI32 acc1_0 = hn::Zero(di32), acc1_1 = hn::Zero(di32);
+    VI32 acc2_0 = hn::Zero(di32), acc2_1 = hn::Zero(di32);
+    VI32 acc3_0 = hn::Zero(di32), acc3_1 = hn::Zero(di32);
+    VI32 acc4_0 = hn::Zero(di32), acc4_1 = hn::Zero(di32);
+    VI32 acc5_0 = hn::Zero(di32), acc5_1 = hn::Zero(di32);
+    VI32 acc6_0 = hn::Zero(di32), acc6_1 = hn::Zero(di32);
+    VI32 acc7_0 = hn::Zero(di32), acc7_1 = hn::Zero(di32);
+
+    VI32 acc0_o_0 = hn::Zero(di32), acc0_o_1 = hn::Zero(di32);
+    VI32 acc1_o_0 = hn::Zero(di32), acc1_o_1 = hn::Zero(di32);
+    VI32 acc2_o_0 = hn::Zero(di32), acc2_o_1 = hn::Zero(di32);
+    VI32 acc3_o_0 = hn::Zero(di32), acc3_o_1 = hn::Zero(di32);
+    VI32 acc4_o_0 = hn::Zero(di32), acc4_o_1 = hn::Zero(di32);
+    VI32 acc5_o_0 = hn::Zero(di32), acc5_o_1 = hn::Zero(di32);
+    VI32 acc6_o_0 = hn::Zero(di32), acc6_o_1 = hn::Zero(di32);
+    VI32 acc7_o_0 = hn::Zero(di32), acc7_o_1 = hn::Zero(di32);
+
+    for (int lane = 0; lane < NF; ++lane) {
+      VI16 vi_first8, vi_next8;
+
+      const int8_t* v_ptr = v_tile + 2 * qkv_dim * lane + i * 2;
+
+      auto v8_t0 = hn::LoadU(di8_half, v_ptr);
+      auto v16_t0 = hn::PromoteTo(di16, v8_t0);
+
+      auto v8_t1 = hn::LoadU(di8_half, v_ptr + kInt16Lanes);
+      auto v16_t1 = hn::PromoteTo(di16, v8_t1);
+
+      vi_first8 = v16_t0;
+      vi_next8 = v16_t1;
+
+      auto mul_acc = [&](int j, VI32& a0, VI32& a_o0, VI32& a1,
+                         VI32& a_o1) HWY_ATTR {
+        int16_t s0 = cs_i16[2 * lane + j * kMaxLanes * 2];
+        int16_t s1 = cs_i16[2 * lane + 1 + j * kMaxLanes * 2];
+
+        int32_t s01;
+        hwy::CopySameSize(&s0, reinterpret_cast<int16_t*>(&s01));
+        hwy::CopySameSize(&s1, reinterpret_cast<int16_t*>(&s01) + 1);
+        VI16 sj = hn::BitCast(di16, hn::Set(di32, s01));
+
+        a0 = hn::ReorderWidenMulAccumulate(di32, vi_first8, sj, a0, a_o0);
+        a1 = hn::ReorderWidenMulAccumulate(di32, vi_next8, sj, a1, a_o1);
+      };
+
+      mul_acc(0, acc0_0, acc0_o_0, acc0_1, acc0_o_1);
+      if constexpr (N >= 2) mul_acc(1, acc1_0, acc1_o_0, acc1_1, acc1_o_1);
+      if constexpr (N >= 3) mul_acc(2, acc2_0, acc2_o_0, acc2_1, acc2_o_1);
+      if constexpr (N >= 4) mul_acc(3, acc3_0, acc3_o_0, acc3_1, acc3_o_1);
+      if constexpr (N >= 5) mul_acc(4, acc4_0, acc4_o_0, acc4_1, acc4_o_1);
+      if constexpr (N >= 6) mul_acc(5, acc5_0, acc5_o_0, acc5_1, acc5_o_1);
+      if constexpr (N >= 7) mul_acc(6, acc6_0, acc6_o_0, acc6_1, acc6_o_1);
+      if constexpr (N >= 8) mul_acc(7, acc7_0, acc7_o_0, acc7_1, acc7_o_1);
+    }
+
+    auto convert_and_add = [&](int j, VI32& a0, VI32& a_o0, VI32& a1,
+                               VI32& a_o1) HWY_ATTR {
+      VF f0 = hn::ConvertTo(df, hn::RearrangeToOddPlusEven(a0, a_o0));
+      VF f1 = hn::ConvertTo(df, hn::RearrangeToOddPlusEven(a1, a_o1));
+
+      VF o0 = hn::Load(df, out.Row(j) + i);
+      VF o1 = hn::Load(df, out.Row(j) + i + NF);
+
+      VF scale_old = hn::Set(df, scales[j]);
+      o0 = hn::Mul(o0, scale_old);
+      o1 = hn::Mul(o1, scale_old);
+
+      VF scale_new = hn::Set(df, q_scales_s[j]);
+      o0 = hn::MulAdd(f0, scale_new, o0);
+      o1 = hn::MulAdd(f1, scale_new, o1);
+
+      hn::Store(o0, df, out.Row(j) + i);
+      hn::Store(o1, df, out.Row(j) + i + NF);
+    };
+
+    convert_and_add(0, acc0_0, acc0_o_0, acc0_1, acc0_o_1);
+    if constexpr (N >= 2)
+      convert_and_add(1, acc1_0, acc1_o_0, acc1_1, acc1_o_1);
+    if constexpr (N >= 3)
+      convert_and_add(2, acc2_0, acc2_o_0, acc2_1, acc2_o_1);
+    if constexpr (N >= 4)
+      convert_and_add(3, acc3_0, acc3_o_0, acc3_1, acc3_o_1);
+    if constexpr (N >= 5)
+      convert_and_add(4, acc4_0, acc4_o_0, acc4_1, acc4_o_1);
+    if constexpr (N >= 6)
+      convert_and_add(5, acc5_0, acc5_o_0, acc5_1, acc5_o_1);
+    if constexpr (N >= 7)
+      convert_and_add(6, acc6_0, acc6_o_0, acc6_1, acc6_o_1);
+    if constexpr (N >= 8)
+      convert_and_add(7, acc7_0, acc7_o_0, acc7_1, acc7_o_1);
+
+    i += 2 * NF;
+  }
+}
+
 template <int32_t N, class DF, class VF = hn::Vec<DF>, typename VType>
 HWY_INLINE HWY_MAYBE_UNUSED void MulByConstAndAddTileUpTo8_BF16(
     DF df, const float* HWY_RESTRICT scales, VF c0_p0, VF c0_p1, VF c1_p0,
@@ -1598,6 +1740,50 @@ MatStorageT<T> AvgPool4x4(MatStorageT<T>& input, const Allocator& allocator) {
     }
   }
   return result;
+}
+
+// Reduces each of x and stores in following lanes of max (tested with float32)
+template <class DF, typename T = hn::TFromD<DF>,
+          class DF4 = hn::CappedTag<T, 4>, class VF4 = hn::Vec<DF4>,
+          class VF = hn::Vec<DF>, typename F>
+static HWY_INLINE VF4 Reduce4(DF df, VF x_0, VF x_1, VF x_2, VF x_3,
+                              F reducer) {
+  const DF4 df4;
+  constexpr size_t kMaxLanes = hn::MaxLanes(df);
+  HWY_LANES_CONSTEXPR size_t kLanes = hn::Lanes(df);
+  HWY_ALIGN T x_transposed[4 * kMaxLanes];
+  hn::StoreInterleaved4(x_0, x_1, x_2, x_3, df, x_transposed);
+  VF x01 =
+      reducer(hn::Load(df, x_transposed), hn::Load(df, x_transposed + kLanes));
+  VF x23 = reducer(hn::Load(df, x_transposed + 2 * kLanes),
+                   hn::Load(df, x_transposed + 3 * kLanes));
+  VF x0123 = reducer(x01, x23);
+  hn::Store(x0123, df, x_transposed);
+
+  VF4 result = hn::Load(df4, x_transposed);
+  for (int i = 1; i < kLanes / 4; ++i) {
+    result = reducer(result, hn::Load(df4, x_transposed + i * 4));
+  }
+  return result;
+}
+
+// Returns vector with 8 lanes. Shouldn't be used on architectures
+// with less than 8 lanes per vector.
+template <class DF, typename T = hn::TFromD<DF>,
+          class DF8 = hn::CappedTag<T, 8>, class VF8 = hn::Vec<DF8>,
+          class VF = hn::Vec<DF>, typename F>
+static HWY_INLINE VF8 Reduce8(DF df, VF x_0, VF x_1, VF x_2, VF x_3, VF x_4,
+                              VF x_5, VF x_6, VF x_7, F reducer) {
+  auto res0123 = Reduce4(df, x_0, x_1, x_2, x_3, reducer);
+  auto res4567 = Reduce4(df, x_4, x_5, x_6, x_7, reducer);
+
+  using DF4 = hn::CappedTag<T, 4>;
+  const DF4 df4;
+  const DF8 df8;
+  HWY_ALIGN T buf[8];
+  hn::Store(res0123, df4, buf);
+  hn::Store(res4567, df4, buf + 4);
+  return hn::Load(df8, buf);
 }
 
 // NOLINTNEXTLINE(google-readability-namespace-comments)
