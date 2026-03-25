@@ -15,26 +15,27 @@
 namespace gcpp {
 
 // Passed to HWY_VISIT_TARGETS; declares for one target.
-#define GEMMA_DECL_TILED_ATTENTION(TARGET, NAMESPACE)                        \
-  namespace NAMESPACE {                                                      \
-  void TiledAttention(AttentionImpl attention_impl, size_t num_tokens,       \
-                      size_t layer_idx, const LayerWeightsPtrs& layer,       \
-                      AttentionActivationsPtrs& activations, QBatch& qbatch, \
-                      MatMulEnv& env, int flags);                            \
-  void TransposeStridedQueries(hwy::Span<float*> queries, int qkv_dim,       \
-                               hwy::Span<float> transposed_queries);         \
-  void LocalAttentionForAllHeadsTokensAndBatch(                              \
-      AttentionImpl attention_impl, const size_t num_tokens,                 \
-      const size_t layer_idx, const LayerWeightsPtrs& layer,                 \
-      AttentionActivationsPtrs& activations, QBatch& qbatch,                 \
-      ThreadingContext& ctx);                                                \
-                                                                             \
-  template <typename OutT>                                                   \
-  std::tuple<std::vector<OutT, hwy::AlignedAllocator<OutT>>,                 \
-             std::vector<OutT*>, AlignedFloatVector>                         \
-  TransposeQueriesToGroupsOfNBF16orInt16(hwy::Span<float*> queries_ptrs,     \
-                                         int qkv_dim, size_t group_size);    \
-  /* NOLINTNEXTLINE(google-readability-namespace-comments) */                \
+#define GEMMA_DECL_TILED_ATTENTION(TARGET, NAMESPACE)                          \
+  namespace NAMESPACE {                                                        \
+  void TiledAttention(AttentionImpl attention_impl, size_t num_tokens,         \
+                      size_t layer_idx, const LayerWeightsPtrs& layer,         \
+                      AttentionActivationsPtrs& activations, QBatch& qbatch,   \
+                      MatMulEnv& env, int flags);                              \
+  void TransposeStridedQueries(hwy::Span<float*> queries, int qkv_dim,         \
+                               hwy::Span<float> transposed_queries);           \
+  void LocalAttentionForAllHeadsTokensAndBatch(                                \
+      AttentionImpl attention_impl, const size_t num_tokens,                   \
+      const size_t layer_idx, const LayerWeightsPtrs& layer,                   \
+      AttentionActivationsPtrs& activations, QBatch& qbatch,                   \
+      ThreadingContext& ctx);                                                  \
+                                                                               \
+  template <typename OutT>                                                     \
+  std::tuple<std::vector<OutT, hwy::AlignedAllocator<OutT>>,                   \
+             std::vector<OutT*>, AlignedFloatVector>                           \
+  TransposeQueriesToGroupsOfNBF16orInt16(hwy::Span<float*> queries_ptrs,       \
+                                         int qkv_dim, size_t group_size);      \
+                                                                               \
+  /* NOLINTNEXTLINE(google-readability-namespace-comments) */                  \
   }  // namespace NAMESPACE
 
 // Function declarations for each SIMD target. Allows direct call from the
