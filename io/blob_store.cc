@@ -508,7 +508,8 @@ void BlobWriter::Add(const std::string& key, const void* data, size_t bytes) {
 void BlobWriter::Finalize() {
   if (!file_->IsAppendOnly() && curr_offset_ != file_->FileSize()) {
     HWY_WARN("Computed offset %zu does not match file size %zu.",
-             curr_offset_, file_->FileSize());
+             static_cast<size_t>(curr_offset_),
+             static_cast<size_t>(file_->FileSize()));
   }
   const BlobStore bs = BlobStore(keys_, blob_sizes_);
 
