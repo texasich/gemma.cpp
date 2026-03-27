@@ -22,6 +22,20 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if(EMSCRIPTEN)
+  add_compile_options("-sMEMORY64")
+  add_compile_options("-msimd128")
+  add_compile_options("-pthread")
+  add_link_options("-sALLOW_MEMORY_GROWTH")
+  add_link_options("-sMAXIMUM_MEMORY=16GB")
+  add_link_options("-sNODERAWFS")
+  add_link_options("-sMEMORY64")
+  add_link_options("-sSTACK_SIZE=2MB")
+  add_link_options("-pthread")
+  add_link_options("-sPROXY_TO_PTHREAD")
+  add_link_options("-sEXIT_RUNTIME=1")
+endif()
+
 FetchContent_Declare(highway GIT_REPOSITORY https://github.com/google/highway.git GIT_TAG c971dbe61bd2751923e3458666450bf95dfbbd98 EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(highway)
 
@@ -60,6 +74,9 @@ set(BENCHMARK_ENABLE_GTEST_TESTS OFF)
 
 FetchContent_Declare(benchmark GIT_REPOSITORY https://github.com/google/benchmark.git GIT_TAG v1.8.2 EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(benchmark)
+if(EMSCRIPTEN)
+  target_compile_options(benchmark PRIVATE -Wno-c2y-extensions)
+endif()
 
 # Base source files
 set(SOURCES

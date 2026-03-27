@@ -51,6 +51,8 @@ namespace gcpp {
 // yet use any AVX 10.2 features.
 #define GEMMA_DISABLED_TARGETS \
   (HWY_SCALAR | HWY_SSE2 | HWY_SSSE3 | HWY_SSE4 | HWY_AVX10_2)
+#elif HWY_ARCH_WASM
+#define GEMMA_DISABLED_TARGETS HWY_SCALAR
 #endif  // HWY_ARCH_*
 
 #endif  // GEMMA_DISABLED_TARGETS
