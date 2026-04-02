@@ -663,7 +663,7 @@ struct MatMulEnv {
     MMKeys keys;
     std::vector<MMPerKey> per_key;
     // Prevents false sharing.
-    HWY_MAYBE_UNUSED uint8_t
+    HWY_MEMBER_VAR_MAYBE_UNUSED uint8_t
         padding[HWY_ALIGNMENT - sizeof(MMKeys) - sizeof(per_key)];
   };
   std::vector<PerCluster> per_cluster;

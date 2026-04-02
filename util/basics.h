@@ -198,7 +198,8 @@ class RngStream {
   uint64_t stream_ = 0;  // immutable after ctor
   uint64_t counter_ = 0;
   // Prevent false sharing if used by multiple threads.
-  HWY_MAYBE_UNUSED uint8_t padding_[HWY_ALIGNMENT - 16 - sizeof(engine_)];
+  HWY_MEMBER_VAR_MAYBE_UNUSED uint8_t
+      padding_[HWY_ALIGNMENT - 16 - sizeof(engine_)];
 };
 
 }  // namespace gcpp
