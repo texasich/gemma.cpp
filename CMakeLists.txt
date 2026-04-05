@@ -25,6 +25,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 FetchContent_Declare(highway GIT_REPOSITORY https://github.com/google/highway.git GIT_TAG 2a16a50ff61071bb25ddef0ce35d92b0e2b9c579 EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(highway)
 
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+   CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15)
+  # Gemma does not currently use AVX10.2-specific Highway paths, and GCC 15
+  # builds in CI can reject Highway's AVX10.2 target attribute.
+  target_compile_definitions(hwy PUBLIC HWY_DISABLED_TARGETS=HWY_AVX10_2)
+endif()
+
 ## Note: absl needs to be installed by sentencepiece. This will only happen if
 ## cmake is invoked with -DSPM_ENABLE_SHARED=OFF and -DSPM_ABSL_PROVIDER=module
 FetchContent_Declare(sentencepiece GIT_REPOSITORY https://github.com/google/sentencepiece GIT_TAG 9045b2f60fa2b323dfac0eaef8fc17565036f9f9 EXCLUDE_FROM_ALL)
