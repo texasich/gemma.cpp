@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: ubuntu-latest (gcc-13) Release
+          - name: ubuntu-latest (make) Release
             os: ubuntu-latest
             preset: make
             build_type: Release
@@ -84,33 +84,6 @@ jobs:
             ${{ github.workspace }}/build/${{ matrix.build_type }}/libgemma.lib
             ${{ github.workspace }}/build/gemma
             ${{ github.workspace }}/build/libgemma.a
-    - uses: actions/checkout@v6
-
-    # Set up ccache
-    - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
-
-    - name: Configure CMake
-      run: >
-        cmake --preset ${{ matrix.preset }}
-        -S ${{ github.workspace }} -B ${{ github.workspace }}/build
-        -D CMAKE_BUILD_TYPE=${{ matrix.build_type }}
-        -D CMAKE_C_COMPILER_LAUNCHER=ccache
-        -D CMAKE_CXX_COMPILER_LAUNCHER=ccache
-        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 
-
-    - name: Buil
-      run: cmake --build ${{ github.workspace }}/build --preset ${{ matrix.preset }} --config ${{ matrix.build_type }} -j 4
-
-    - name: Archive production artifacts
-      uses: actions/upload-artifact@v6
-      with:
-        name: gemma-${{ matrix.os }}-${{ matrix.preset }}-${{ matrix.build_type }}
-        path: |
-          ${{ github.workspace }}/build/${{ matrix.build_type }}/gemma.exe
-          ${{ github.workspace }}/build/${{ matrix.build_type }}/libgemma.lib
-          ${{ github.workspace }}/build/gemma
-          ${{ github.workspace }}/build/libgemma.a
 
   bazel:
     runs-on: ubuntu-latest
