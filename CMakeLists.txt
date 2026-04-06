@@ -22,7 +22,21 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-FetchContent_Declare(highway GIT_REPOSITORY https://github.com/google/highway.git GIT_TAG 2a16a50ff61071bb25ddef0ce35d92b0e2b9c579 EXCLUDE_FROM_ALL)
+if(EMSCRIPTEN)
+  add_compile_options("-sMEMORY64")
+  add_compile_options("-msimd128")
+  add_compile_options("-pthread")
+  add_link_options("-sALLOW_MEMORY_GROWTH")
+  add_link_options("-sMAXIMUM_MEMORY=16GB")
+  add_link_options("-sNODERAWFS")
+  add_link_options("-sMEMORY64")
+  add_link_options("-sSTACK_SIZE=2MB")
+  add_link_options("-pthread")
+  add_link_options("-sPROXY_TO_PTHREAD")
+  add_link_options("-sEXIT_RUNTIME=1")
+endif()
+
+FetchContent_Declare(highway GIT_REPOSITORY https://github.com/google/highway.git GIT_TAG c971dbe61bd2751923e3458666450bf95dfbbd98 EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(highway)
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
@@ -67,6 +81,9 @@ set(BENCHMARK_ENABLE_GTEST_TESTS OFF)
 
 FetchContent_Declare(benchmark GIT_REPOSITORY https://github.com/google/benchmark.git GIT_TAG v1.8.2 EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(benchmark)
+if(EMSCRIPTEN)
+  target_compile_options(benchmark PRIVATE -Wno-c2y-extensions)
+endif()
 
 # Base source files
 set(SOURCES
@@ -89,6 +106,7 @@ set(SOURCES
   gemma/configs.h
   gemma/flash_attention.cc
   gemma/flash_attention.h
+  gemma/flash_structs.h
   gemma/gemma_args.h
   gemma/gemma-inl.h
   gemma/gemma.cc
@@ -99,6 +117,8 @@ set(SOURCES
   gemma/model_store.h
   gemma/tensor_info.cc
   gemma/tensor_info.h
+  gemma/tiled_attention.cc
+  gemma/tiled_attention.h
   gemma/tokenizer.cc
   gemma/tokenizer.h
   gemma/vit.cc
@@ -177,20 +197,20 @@ install(TARGETS libgemma DESTINATION lib)
 if(BUILD_GEMMA_DLL)
     add_library(gemma_shared SHARED ${SOURCES})
 set_property(TARGET gemma_shared PROPERTY CXX_STANDARD 17)
-set_target_properties(gemma_shared PROPERTIES 
+set_target_properties(gemma_shared PROPERTIES
     PREFIX ""
     OUTPUT_NAME "gemma"
 )
 set_property(TARGET gemma_shared PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_include_directories(gemma_shared PUBLIC ./)
-target_link_libraries(gemma_shared PRIVATE 
+target_link_libraries(gemma_shared PRIVATE
     $<LINK_LIBRARY:WHOLE_ARCHIVE,hwy>
     $<LINK_LIBRARY:WHOLE_ARCHIVE,hwy_contrib>
     $<LINK_LIBRARY:WHOLE_ARCHIVE,sentencepiece-static>
 )
 target_include_directories(gemma_shared PUBLIC ${sentencepiece_SOURCE_DIR})
-target_compile_definitions(gemma_shared 
-    PRIVATE 
+target_compile_definitions(gemma_shared
+    PRIVATE
     GEMMA_EXPORTS
     $<$<PLATFORM_ID:Windows>:_CRT_SECURE_NO_WARNINGS NOMINMAX>
 )
@@ -228,6 +248,7 @@ set(GEMMA_TEST_FILES
   compression/nuq_test.cc
   compression/sfp_test.cc
   evals/gemma_test.cc
+  gemma/gemma_args_test.cc
   gemma/flash_attention_test.cc
   gemma/tensor_info_test.cc
   io/blob_store_test.cc

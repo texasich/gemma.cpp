@@ -33,6 +33,9 @@ namespace gcpp {
 // For hwy::BitSet4096. Note that KVs are extremely large for such batches.
 HWY_INLINE_VAR constexpr size_t kMaxBatchSize = 4096;
 
+// Multiplier so a u64 occupies an entire cache line; avoids false sharing.
+HWY_INLINE_VAR constexpr size_t kU64PerLine = HWY_ALIGNMENT / sizeof(uint64_t);
+
 enum class Tristate : int32_t { kFalse = 0, kTrue = 1, kDefault = -1 };
 
 static inline const char* ToString(Tristate t) {
@@ -77,6 +80,9 @@ static inline intptr_t MaybeTestInitialized(const void* ptr, size_t size) {
   return 0;
 #endif
 }
+
+// If `verbosity >= min_verbosity`, prints the formatted message to stderr.
+void MaybePrint(int min_verbosity, int verbosity, const char* format, ...);
 
 // Shared between gemma.h and ops-inl.h.
 #pragma pack(push, 1)
@@ -192,7 +198,8 @@ class RngStream {
   uint64_t stream_ = 0;  // immutable after ctor
   uint64_t counter_ = 0;
   // Prevent false sharing if used by multiple threads.
-  HWY_MAYBE_UNUSED uint8_t padding_[HWY_ALIGNMENT - 16 - sizeof(engine_)];
+  HWY_MEMBER_VAR_MAYBE_UNUSED uint8_t
+      padding_[HWY_ALIGNMENT - 16 - sizeof(engine_)];
 };
 
 }  // namespace gcpp

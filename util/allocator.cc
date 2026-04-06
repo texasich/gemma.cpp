@@ -101,6 +101,9 @@ size_t DetectPageSize() {
   size_t len = sizeof(data);
   HWY_ASSERT(sysctlbyname("vm.pagesize", &data, &len, nullptr, 0) == 0);
   return data;
+#elif defined(__EMSCRIPTEN__)
+  // Pages in Wasm are always 64KiB.
+  return 65536;
 #else
   return 0;
 #endif
@@ -123,6 +126,9 @@ size_t DetectTotalMiB(size_t page_bytes) {
   HWY_ASSERT(sysctl(mib, sizeof(mib) / sizeof(*mib), &data, &len, nullptr, 0) ==
              0);
   return data >> 20;
+#elif defined(__EMSCRIPTEN__)
+  // The maximum linear memory in Wasm is currently specified at 16GiB.
+  return 16384;
 #else
 #error "Port"
 #endif
@@ -199,6 +205,9 @@ size_t Allocator::FreeMiB() const {
   sysctlbyname("vm.page_inactive_count", &inactive, &len, nullptr, 0);
   sysctlbyname("vm.page_speculative_count", &speculative, &len, nullptr, 0);
   return (free + inactive + speculative) * base_page_bytes_ >> 20;
+#elif defined(__EMSCRIPTEN__)
+  // There's no way to emulate this in emscripten so we lie.
+  return 16384;
 #else
 #error "Port"
 #endif

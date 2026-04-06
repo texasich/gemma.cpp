@@ -84,6 +84,7 @@ PYBIND11_MODULE(configs, py_module) {
 
   enum_<Model>(py_module, "Model")
       .value("UNKNOWN", Model::UNKNOWN)
+      .value("CUSTOM", Model::CUSTOM)
       .value("GEMMA2_9B", Model::GEMMA2_9B)
       .value("GEMMA2_27B", Model::GEMMA2_27B)
       .value("GEMMA2_2B", Model::GEMMA2_2B)
@@ -173,6 +174,8 @@ PYBIND11_MODULE(configs, py_module) {
       .def_readwrite("secondary_eos_id", &ModelConfig::secondary_eos_id)
       .def_readwrite("scale_base_names", &ModelConfig::scale_base_names)
       .def_readwrite("internal", &ModelConfig::internal)
+      .def_readwrite("use_global_timescale",
+                     &ModelConfig::use_global_timescale)
 
       .def("add_layer_config", &ModelConfig::AddLayerConfig,
            arg("layer_config"))
